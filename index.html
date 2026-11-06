@@ -239,7 +239,7 @@ function photosOf(d,kind){ return (d.photos||[]).filter(p=>p.kind===kind && !p.d
 function alertsFor(d){
   const a=[]; const e=Number(d.etape);
   if(e===0) return a;
-  if(e===1 && daysSince(d.createdAt)>=1) a.push({lvl:"danger",t:"Lead non traité depuis "+daysSince(d.createdAt)+" j"});
+  if(e===1 && daysSince(d.createdAt)>=1 && daysSince(d.createdAt)<=30) a.push({lvl:"danger",t:"Lead non traité depuis "+daysSince(d.createdAt)+" j"});
   if(e>=2 && e<=3 && !piecesOK(d)) a.push({lvl:"warn",t:"Pièces manquantes : "+[!d.pAvis&&"avis d'impôt",!d.pCni&&"CNI",!d.pDevis&&"devis"].filter(Boolean).join(", ")});
   if(e>=2 && e<=3 && d.rfr==="" ) a.push({lvl:"warn",t:"RFR non renseigné"});
   if(e===4 && daysSince(d.dateDepotOPX)>=10) a.push({lvl:"warn",t:"OPX déposé il y a "+daysSince(d.dateDepotOPX)+" j sans retour"});
@@ -562,6 +562,7 @@ const FILTRES = [
   ["soldes","Soldés",d=>Number(d.etape)===9],
   ["perdus","Perdus",d=>Number(d.etape)===0],
   ["verifier","À vérifier",d=>!!d.aVerifier],
+  ["devis","Avec devis",d=>(d.devis||[]).length>0],
   ["tous","Tous",()=>true],
 ];
 function itemRow(d){
@@ -666,6 +667,7 @@ function viewDossier(d){
       <div class="card kpi"><div class="v money">${eur(resteAEncaisser(d))}</div><div class="l">Reste à encaisser</div></div>
       <div class="card kpi"><div class="v money">${eur(couts(d))}</div><div class="l">Coûts</div></div>
     </div>
+    ${(d.devis||[]).length?`<h3>Devis et factures (historique Qhare)</h3><div class="card scroll-x" style="padding:4px 8px;margin-bottom:14px"><table class="t"><thead><tr><th>Devis</th><th>Facture</th><th>Opération</th><th class="r">TTC</th><th class="r">Prime CEE</th><th class="r">MPR</th><th class="r">Reste à charge</th></tr></thead><tbody>${d.devis.map(v=>`<tr style="cursor:default"><td>${esc(v.num)}<div class="small muted">${esc(v.date||"")}</div></td><td>${esc(v.fac||"—")}${v.fac?`<div class="small ${/oui/i.test(v.acq||"")?"pos":"muted"}">${/oui/i.test(v.acq||"")?"acquittée":"non acquittée"}</div>`:""}</td><td class="small">${esc(v.op||"")}</td><td class="r money">${v.ttc!==undefined&&v.ttc!==""?eur(v.ttc):"—"}</td><td class="r money">${v.cee!==undefined&&v.cee!==""?eur(v.cee):"—"}</td><td class="r money">${v.mpr!==undefined&&v.mpr!==""?eur(v.mpr):"—"}</td><td class="r money">${v.rac!==undefined&&v.rac!==""?eur(v.rac):"—"}</td></tr>`).join("")}</tbody></table></div>`:""}
     <h3>Recettes</h3>
     <div class="form">${F(d,"valoCEE","Valo CEE (€)","number")}${F(d,"encaisseCEE","CEE encaissé (€)","number")}
       ${F(d,"valoMPR","Valo MPR (€)","number",{ph:isPAC(d)&&c?"estimée "+AIDE_MPR_PAC[c]:""})}${F(d,"encaisseMPR","MPR encaissé (€)","number")}
