@@ -230,7 +230,7 @@ function alertsFor(d){
   if(e>=7 && e<=8 && !(d.satisfaction&&d.satisfaction.note)) a.push({lvl:"warn",t:"Fiche satisfaction non signée"});
   if(e>=7 && e<=8 && d.statutMPR==="À déposer" && couleurOf(d)!=="rose") a.push({lvl:"warn",t:"Demande MPR à déposer"});
   if(e===8 && resteAEncaisser(d)>0 && daysSince(d.dateDemandeSolde)>=30) a.push({lvl:"danger",t:"Solde demandé il y a "+daysSince(d.dateDemandeSolde)+" j — "+eur(resteAEncaisser(d))+" à encaisser"});
-  if(e>=3 && couts(d)>0 && recettesPrev(d)>0 && margePrev(d)<1000) a.push({lvl:"danger",t:"Marge prévisionnelle faible : "+eur(margePrev(d))});
+  if(e>=3 && e<=8 && couts(d)>0 && recettesPrev(d)>0 && margePrev(d)<1000) a.push({lvl:"danger",t:"Marge prévisionnelle faible : "+eur(margePrev(d))});
   return a;
 }
 
