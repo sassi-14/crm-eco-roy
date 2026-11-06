@@ -1,5 +1,5 @@
 // Service worker CRM Eco-Roy : l'appli s'ouvre même sans réseau.
-const CACHE = "ecoroy-crm-v1";
+const CACHE = "ecoroy-crm-v2";
 const SHELL = ["./", "index.html", "manifest.webmanifest", "icon-192.png", "icon-512.png"];
 
 self.addEventListener("install", e => {
@@ -10,7 +10,12 @@ self.addEventListener("activate", e => {
 });
 self.addEventListener("fetch", e => {
   const url = new URL(e.request.url);
-  if (e.request.method !== "GET" || url.origin !== location.origin) return; // API Apps Script : jamais en cache
+  if (e.request.method !== "GET") return;
+  if (url.hostname === "cdnjs.cloudflare.com") { // bibliothèque de la carte : cache d'abord
+    e.respondWith(caches.match(e.request).then(r => r || fetch(e.request).then(res => { const c = res.clone(); caches.open(CACHE).then(k => k.put(e.request, c)); return res; })));
+    return;
+  }
+  if (url.origin !== location.origin) return; // API Apps Script, adresses, tuiles : jamais en cache
   // Réseau d'abord (pour recevoir les mises à jour), cache si hors ligne
   e.respondWith(
     fetch(e.request).then(r => {

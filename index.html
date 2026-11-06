@@ -136,6 +136,24 @@ table.t tr{cursor:pointer}
 .pill-etape{font-size:11px;font-weight:600;color:var(--muted)}
 .big-num{font-size:28px;font-weight:700;letter-spacing:-.02em}
 .pos{color:var(--ok)}.neg{color:var(--danger)}
+.kanban{display:flex;gap:10px;overflow-x:auto;padding-bottom:10px;align-items:flex-start;scroll-snap-type:x proximity}
+.kcol{flex:0 0 250px;background:var(--brand-soft);border-radius:12px;padding:8px;scroll-snap-align:start;min-height:120px}
+.khead{display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:8px;font-size:13px}
+.kbody{display:flex;flex-direction:column;gap:6px}
+.kcard{position:relative;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 30px 8px 9px;cursor:grab;display:grid;gap:2px}
+.kmove{position:absolute;right:4px;top:50%;transform:translateY(-50%);border:0;background:var(--brand-soft);color:var(--brand-2);border-radius:8px;width:24px;height:24px;cursor:pointer;font-weight:700}
+.dragging{opacity:.45}.dropover{outline:2px dashed var(--brand-2);outline-offset:-2px}
+.mapbox{height:min(62vh,560px);border-radius:var(--radius);border:1px solid var(--line);overflow:hidden;background:var(--line)}
+.mnum{width:26px;height:26px;border-radius:50%;color:#fff;font-weight:700;font-size:12px;display:flex;align-items:center;justify-content:center;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35)}
+table.plan{border-collapse:separate;border-spacing:4px;width:100%;min-width:760px}
+table.plan th{font-size:12px;font-weight:600;color:var(--muted);padding:4px;text-align:center}
+table.plan th.pname{text-align:left;color:var(--ink);width:90px}
+table.plan td{background:var(--card);border:1px solid var(--line);border-radius:10px;vertical-align:top;padding:4px;height:72px;width:13%}
+table.plan td.today,table.plan th.today{background:var(--brand-soft)}
+table.plan td.over{border-color:var(--danger);background:var(--danger-soft)}
+.pchip{background:var(--brand-soft);border-left:0;border-radius:8px;padding:4px 6px;font-size:12px;margin-bottom:4px;cursor:grab;line-height:1.3}
+.pchip.warn{background:var(--warn-soft)}.pchip.done{background:var(--line);color:var(--muted)}.pchip.suite{opacity:.6}
+.pchip span{color:var(--muted)}
 </style>
 </head>
 <body>
@@ -252,7 +270,7 @@ const DB = {
 let CFG = loadCfg();
 function loadCfg(){ try{ return JSON.parse(localStorage.getItem("ecoroy_cfg"))||{}; }catch(e){ return {}; } }
 function saveCfg(){ try{ localStorage.setItem("ecoroy_cfg",JSON.stringify(CFG)); }catch(e){} }
-const S = { dossiers:new Map(), view:"dash", param:null, filter:"actifs", q:"", tab:"client", sync:{state:"idle",msg:""}, outbox:0, thumbs:new Map() };
+const S = { dossView:(()=>{try{return localStorage.getItem("ecoroy_dossview")}catch(_){return null}})(), dossiers:new Map(), view:"dash", param:null, filter:"actifs", q:"", tab:"client", sync:{state:"idle",msg:""}, outbox:0, thumbs:new Map() };
 const isAdmin = () => CFG.role==="admin" || CFG.role==="demo";
 const isPoseur = () => CFG.role==="poseur";
 
@@ -337,6 +355,7 @@ async function syncNow(){
       const keep=new Set(res.ids||[]); for(const id of [...S.dossiers.keys()]) if(!keep.has(id) && !pendingIds.has(id)){ S.dossiers.delete(id); await DB.del("dossiers",id); }
     }
     CFG.lastSync=res.now; CFG.lastSyncAt=Date.now(); saveCfg();
+    if(!S._setLoaded){ S._setLoaded=true; await pullSettings(); }
     S.outbox=(await DB.all("outbox")).length;
     S.sync={state:"ok",msg:"À jour"};
     safeRender();
@@ -395,6 +414,7 @@ const IC = {
   cal:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>',
   euro:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 7a7 7 0 1 0 0 10M4 10h10M4 14h10"/></svg>',
   gear:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
+  map:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2z"/><path d="M9 4v14M15 6v14"/></svg>',
   wrench:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z"/></svg>',
 };
 
@@ -407,12 +427,14 @@ function render(){
   const v=S.view;
   if(isPoseur()) h = v==="dossier" ? viewChantierPoseur(S.dossiers.get(S.param)) : v==="reglages" ? viewReglages() : viewPoseurList();
   else if(v==="dash") h=viewDash();
-  else if(v==="pipeline") h=viewPipeline();
+  else if(v==="pipeline") h=dossToggle()+(S.dossView==="kanban"?viewKanban():viewPipeline());
+  else if(v==="carte") h=viewCarte();
   else if(v==="dossier") h=viewDossier(S.dossiers.get(S.param));
-  else if(v==="planning") h=viewPlanning();
-  else if(v==="finances") h=viewFinances();
-  else if(v==="reglages") h=viewReglages();
+  else if(v==="planning") h=viewPlanningVisuel();
+  else if(v==="finances") h=viewGestion();
+  else if(v==="reglages") h=viewReglages()+viewReglagesPlus();
   const y=window.scrollY; const keepScroll = S._keepScroll; S._keepScroll=false;
+  if(typeof MAP!=="undefined" && MAP){ try{ S.mapView={c:MAP.getCenter(),z:MAP.getZoom()}; MAP.remove(); }catch(_){ } MAP=null; }
   app.innerHTML = header() + h;
   if(keepScroll) window.scrollTo(0,y);
   afterRender();
@@ -425,7 +447,7 @@ function safeRender(){
 }
 document.addEventListener("focusout",()=>setTimeout(()=>{ if(S.needRender && !sigDirty){ const a=document.activeElement; if(!a || !/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)){ S.needRender=false; captureDraft(); S._keepScroll=true; render(); } } },300));
 function header(){
-  const title = isPoseur() ? "Mes chantiers" : ({dash:"Tableau de bord",pipeline:"Dossiers",dossier:"Dossier",planning:"Planning poses",finances:"Finances",reglages:"Réglages"})[S.view]||"CRM";
+  const title = isPoseur() ? "Mes chantiers" : ({dash:"Tableau de bord",pipeline:"Dossiers",dossier:"Dossier",carte:"Carte",planning:"Planning des poses",finances:"Gestion",reglages:"Réglages"})[S.view]||"CRM";
   const sub = isPoseur() ? esc(CFG.poseur) : (CFG.role==="demo"?"Mode démo (données locales)":"Eco-Roy");
   const back = S.view==="dossier" ? `<button class="back" data-act="back" aria-label="Retour">←</button>` : "";
   return `<header class="top">${back}<h1>${title}<small>${sub}</small></h1><div class="sync" id="sync" data-act="sync"></div></header>`;
@@ -442,13 +464,14 @@ function renderSync(){
 function renderTabs(){
   const nav=$("#tabs"); nav.hidden=false;
   const items = isPoseur() ? [["poseur","Chantiers","wrench"],["reglages","Compte","gear"]] :
-    [["dash","Accueil","dash"],["pipeline","Dossiers","list"],["planning","Planning","cal"],["finances","Finances","euro"],["reglages","Réglages","gear"]];
+    [["dash","Accueil","dash"],["pipeline","Dossiers","list"],["carte","Carte","map"],["planning","Planning","cal"],["finances","Gestion","euro"],["reglages","Réglages","gear"]];
   const cur = S.view==="dossier" ? (isPoseur()?"poseur":"pipeline") : S.view;
   nav.innerHTML=items.map(([v,l,i])=>`<button data-nav="${v}" class="${cur===v?"on":""}">${IC[i]}${l}</button>`).join("");
 }
 function afterRender(){
   renderSync();
   const c=$("canvas.sig"); if(c) initSignature(c); else sigDirty=false;
+  if(S.view==="carte" && isAdmin()) initCarte();
 }
 
 /* ----- Connexion ----- */
@@ -549,6 +572,7 @@ function itemRow(d){
       ${al.length?`<span class="badge ${al.some(a=>a.lvl==="danger")?"danger":"warn"}">${al.length} alerte${al.length>1?"s":""}</span>`:(d.aVerifier?'<span class="badge grey">à vérifier</span>':"")}
     </div></div>`;
 }
+function dossToggle(){ return `<div class="seg" style="margin-bottom:10px;max-width:320px"><button data-mact="dossview" data-v="liste" class="${S.dossView!=="kanban"?"on":""}">Liste</button><button data-mact="dossview" data-v="kanban" class="${S.dossView==="kanban"?"on":""}">Kanban</button></div>`; }
 function viewPipeline(){
   const all=actifs(); const q=S.q.trim().toLowerCase();
   const f=FILTRES.find(x=>x[0]===S.filter)||FILTRES[0];
@@ -620,7 +644,9 @@ function viewDossier(d){
       ${F(d,"materiel","Matériel","text",{full:true,ph:"ex : PAC 11 kW Mono + ballon 200 L"})}
       ${F(d,"dateCommande","Date commande","date")}${F(d,"dateLivraison","Livraison prévue","date")}
       ${F(d,"poseur","Poseur","select",{options:poseursList(),allowEmpty:true})}${F(d,"prixPoseur","Prix poseur (€)","number")}
-      ${F(d,"datePose","Date de pose","date")}${F(d,"dateInstallation","Installé le","date")}
+      ${F(d,"datePose","Date de pose","date")}${F(d,"dureeJours","Durée (jours)","number",{ph:"1"})}
+      ${F(d,"numCommande","N° de commande","text")}${F(d,"livreLe","Livré le","date")}
+      ${F(d,"dateInstallation","Installé le","date")}
       ${F(d,"notesTech","Consignes pour le poseur","textarea",{full:true,ph:"accès, emplacement unité ext., particularités…"})}
     </div>
     <h3 style="margin-top:18px">Photos avant travaux</h3>${photoGrid(d,"avant",true)}
@@ -642,13 +668,14 @@ function viewDossier(d){
       ${F(d,"rac","Reste à charge client (€)","number",{ph:"1"})}${F(d,"dateDemandeSolde","Solde demandé le","date")}</div>
     <h3 style="margin-top:18px">Coûts</h3>
     <div class="form">${F(d,"prixMateriel","Matériel (€)","number")}${F(d,"prixPoseur","Poseur (€)","number")}
-      ${F(d,"regie","Régie / apporteur","text")}${F(d,"commission","Commission (€)","number")}</div>
+      ${F(d,"regie","Régie / apporteur","text")}${F(d,"commission","Commission (€)","number")}
+      ${F(d,"poseurPayeLe","Poseur payé le","date")}${F(d,"commissionPayeeLe","Commission payée le","date")}</div>
     <div class="row wrap" style="margin-top:12px;gap:8px">
       <button class="btn" data-act="encaisser" data-k="CEE">CEE reçu en totalité</button>
       <button class="btn" data-act="encaisser" data-k="MPR">MPR reçue en totalité</button>
     </div>`;
   }
-  if(S.tab==="hist") body=`<div class="list">${(d.historique||[]).slice().reverse().map(h=>`<div class="card row"><span class="grow">${esc(etapeLabel(h.etape))}</span><span class="small muted">${new Date(h.t).toLocaleString("fr-FR")}</span></div>`).join("")}</div>
+  if(S.tab==="hist") body=`${(d.comms||[]).length?`<h3>Contacts</h3><div class="list" style="margin-bottom:14px">${d.comms.slice().reverse().map(c=>`<div class="card"><div class="row"><b class="grow">${({sms:"SMS",whatsapp:"WhatsApp",mail:"Mail",appel:"Appel",commande:"Commande fournisseur"})[c.canal]||esc(c.canal)}${c.modele?" · "+esc(c.modele):""}</b><span class="small muted">${new Date(c.t).toLocaleString("fr-FR")}</span></div>${c.txt?`<div class="small muted" style="margin-top:4px">${esc(c.txt)}</div>`:""}</div>`).join("")}</div><h3>Étapes</h3>`:""}<div class="list">${(d.historique||[]).slice().reverse().map(h=>`<div class="card row"><span class="grow">${esc(etapeLabel(h.etape))}</span><span class="small muted">${new Date(h.t).toLocaleString("fr-FR")}</span></div>`).join("")}</div>
     <div class="hr"></div><div class="small muted">Créé le ${new Date(d.createdAt).toLocaleString("fr-FR")} · modifié le ${new Date(d.updatedAt).toLocaleString("fr-FR")}</div>
     <button class="btn danger" style="margin-top:14px" data-act="delete">Supprimer ce dossier</button>`;
   return `
@@ -659,6 +686,7 @@ function viewDossier(d){
     <div class="stepper">${[1,2,3,4,5,6,7,8,9].map(n=>`<i class="${e>=n?"on":""}"></i>`).join("")}</div>
     <div class="row" style="gap:8px;margin-top:8px">
       <select data-field="etape" style="flex:1">${ETAPES.map(x=>`<option value="${x.n}" ${e===x.n?"selected":""}>${x.n?x.n+". ":""}${esc(x.l)}</option>`).join("")}</select>
+      <button class="btn" data-mact="contact">💬 Contacter</button>
       ${e>=1&&e<9?`<button class="btn primary" data-act="next">Étape suivante →</button>`:""}
     </div>
     ${al.length?`<div class="list" style="margin-top:10px">${al.map(a=>`<div class="alert ${a.lvl==="danger"?"danger":""}" style="cursor:default"><span class="ic">${a.lvl==="danger"?"!":"•"}</span><div>${esc(a.t)}</div></div>`).join("")}</div>`:""}
@@ -666,7 +694,6 @@ function viewDossier(d){
   <div class="dtabs">${tabs.map(([k,l])=>`<button data-tab="${k}" class="${S.tab===k?"on":""}">${l}</button>`).join("")}</div>
   ${body}`;
 }
-function poseursList(){ const base=(CFG.poseurs&&CFG.poseurs.length?CFG.poseurs:["Igor","Kevin"]); const seen=new Set(base); for(const d of S.dossiers.values()) if(d.poseur&&!seen.has(d.poseur)){seen.add(d.poseur);} return [...seen]; }
 
 function satisfactionBlock(d, editable){
   const s=d.satisfaction||{};
@@ -1036,6 +1063,387 @@ function qualifCard(d){
     <span class="badge ${q.temp==="chaud"?"":q.temp==="tiède"?"warn":"grey"}">${q.temp==="chaud"?"🔥 chaud":esc(q.temp)}</span><span class="grow"></span><button class="btn" data-act="qualifier" style="padding:6px 10px">Requalifier</button></div>
     ${(q.bloquants||[]).map(t=>`<div class="small neg" style="margin-top:6px">⚠ ${esc(t)}</div>`).join("")}${(q.points||[]).map(t=>`<div class="small muted" style="margin-top:4px">• ${esc(t)}</div>`).join("")}</div>`;
 }
+
+
+/* ============================================================
+   LOT 1 — Carte, Kanban, Planning visuel, Gestion (pilotage,
+   trésorerie, paiements dus, commandes), Communication 1 clic,
+   Réglages partagés
+   ============================================================ */
+
+/* ---------- Réglages partagés (stockés sur le serveur) ---------- */
+const DEFAULT_SET = {
+  poseurs:[{nom:"Igor",capacite:2},{nom:"Kevin",capacite:1}],
+  coutsLead:{"Call Maroc":0,"Hello Artisan":50,"Effy":119,"Site internet":0,"Igor":0,"Parrainage":0,"Apporteur":0,"Direct":0,"Autre":0},
+  fournisseurs:[{nom:"Axdis",email:"",tel:""},{nom:"Brother Négoce",email:"",tel:""},{nom:"LM Plastic",email:"",tel:""},{nom:"Elle M",email:"",tel:""}],
+  societe:{nom:"Eco Roy",tel:"09 72 14 91 62",mobile:"06 14 72 40 41",email:"contact@roy-consulting.com",site:"www.eco-roy.com",avisGoogle:""},
+  modeles:[
+    {id:"m1",nom:"Premier contact",txt:"Bonjour {prenom}, c'est {societe}. Suite à votre demande pour une pompe à chaleur, je vous appelle pour vérifier votre éligibilité aux aides. Quand êtes-vous disponible ?"},
+    {id:"m2",nom:"Pièces manquantes",txt:"Bonjour {prenom}, pour finaliser votre dossier d'aides il nous manque : {pieces}. Une photo lisible par SMS ou par mail suffit. Merci ! {societe}"},
+    {id:"m3",nom:"Confirmation date de pose",txt:"Bonjour {prenom}, votre installation est programmée le {date_pose}. Notre technicien {poseur} arrivera dans la matinée. Pour toute question : {tel_societe}. {societe}"},
+    {id:"m4",nom:"Rappel veille de pose",txt:"Bonjour {prenom}, petit rappel : notre équipe intervient chez vous demain ({date_pose}). Merci de laisser l'accès à la chaudière et à l'emplacement de l'unité extérieure. {societe}"},
+    {id:"m5",nom:"Merci + avis Google",txt:"Bonjour {prenom}, merci pour votre confiance ! Si vous êtes satisfait de l'installation, un avis nous aiderait beaucoup : {avis_google}. {societe}"},
+    {id:"m6",nom:"Relance sans réponse",txt:"Bonjour {prenom}, j'ai essayé de vous joindre au sujet de votre projet de pompe à chaleur. Rappelez-moi au {tel_societe} quand vous pouvez. {societe}"},
+  ],
+};
+function SET(){ return Object.assign({}, DEFAULT_SET, CFG.settings||{}); }
+function poseursList(){ const base=SET().poseurs.map(p=>p.nom); const seen=new Set(base); for(const d of S.dossiers.values()) if(d.poseur && !seen.has(d.poseur) && !/\//.test(d.poseur)) seen.add(d.poseur); return [...seen]; }
+function capacite(nom){ const p=SET().poseurs.find(x=>x.nom.toLowerCase()===String(nom||"").toLowerCase()); return p?Number(p.capacite)||1:1; }
+async function pullSettings(){ if(CFG.role!=="admin") return; try{ const r=await api("getSettings"); if(r.settings){ CFG.settings=r.settings; saveCfg(); } }catch(e){ console.warn("réglages",e); } }
+async function pushSettings(){ saveCfg(); if(CFG.role==="admin"){ try{ await api("setSettings",{settings:CFG.settings}); toast("Réglages enregistrés"); }catch(e){ toast("Enregistré sur cet appareil (serveur injoignable)"); } } else toast("Enregistré"); }
+
+/* ---------- Groupes d'étapes (couleurs carte / kanban) ---------- */
+const GROUPES = [
+  {k:"lead",l:"Leads",et:[1,2],c:"#d97706"},
+  {k:"montage",l:"Montage",et:[3,4,5],c:"#2459c9"},
+  {k:"pose",l:"Pose programmée",et:[6],c:"#7a3fc4"},
+  {k:"installe",l:"Installés",et:[7,8],c:"#1f7a45"},
+  {k:"solde",l:"Soldés",et:[9],c:"#6b7280"},
+];
+const groupeOf = d => GROUPES.find(g=>g.et.includes(Number(d.etape)));
+
+/* ============================================================
+   KANBAN
+   ============================================================ */
+function viewKanban(){
+  const all=actifs(); const q=S.q.trim().toLowerCase();
+  const list=q?all.filter(d=>[d.nom,d.prenom,d.tel,d.ville,d.cp,d.poseur].join(" ").toLowerCase().includes(q)):all;
+  const cols=ETAPES.filter(e=>e.n!==0 || S.showPerdus);
+  return `<div class="row" style="margin-bottom:10px;gap:8px"><input type="search" id="q" placeholder="Rechercher…" value="${esc(S.q)}" class="grow">
+    <label class="small muted row" style="gap:6px;white-space:nowrap"><input type="checkbox" data-mact="toggleperdus" ${S.showPerdus?"checked":""}>Perdus</label></div>
+  <div class="kanban">${cols.map(e=>{ const items=list.filter(d=>Number(d.etape)===e.n).sort((a,b)=>b.updatedAt-a.updatedAt);
+    const tot=items.reduce((s,d)=>s+recettesPrev(d),0);
+    return `<div class="kcol" data-drop-etape="${e.n}"><div class="khead"><b>${e.n?e.n+". ":""}${esc(e.l)}</b><span class="badge grey">${items.length}</span></div>
+      ${tot?`<div class="small muted" style="margin:-4px 0 6px">${eur(tot)} prévisionnel</div>`:""}
+      <div class="kbody">${items.slice(0,80).map(kcard).join("")}${items.length>80?`<div class="small muted">+ ${items.length-80} autres</div>`:""}</div></div>`; }).join("")}</div>`;
+}
+function kcard(d){
+  const al=alertsFor(d); const c=couleurOf(d);
+  return `<div class="kcard" draggable="true" data-drag-id="${esc(d.id)}" data-open="${esc(d.id)}">
+    <div class="row" style="gap:6px"><span class="pastille c-${c||"none"}"></span><b class="grow" style="font-size:13px">${esc(fullName(d))}</b>${al.length?`<span class="badge ${al.some(a=>a.lvl==="danger")?"danger":"warn"}">${al.length}</span>`:""}</div>
+    <div class="small muted">${esc([d.ville||d.cp, d.source].filter(Boolean).join(" · "))}</div>
+    ${d.datePose&&Number(d.etape)>=5?`<div class="small">🔧 ${fmtDate(d.datePose)} · ${esc(d.poseur||"?")}</div>`:""}
+    ${d.temperature?`<div class="small">${d.temperature==="chaud"?"🔥":d.temperature==="tiède"?"🌤":"❄"} ${esc(d.scoreLead||"")}/100</div>`:""}
+    <button class="kmove" data-mact="kadvance" data-id="${esc(d.id)}" title="Étape suivante">→</button>
+  </div>`;
+}
+
+/* ============================================================
+   CARTE (Leaflet + Base Adresse Nationale)
+   ============================================================ */
+let LEAF=null, MAP=null, MAPLAYER=null;
+function loadLeaflet(){
+  if(LEAF) return LEAF;
+  LEAF=new Promise((res,rej)=>{ const l=document.createElement("link"); l.rel="stylesheet"; l.href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"; document.head.appendChild(l);
+    const s=document.createElement("script"); s.src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"; s.onload=()=>res(window.L); s.onerror=()=>{LEAF=null;rej(new Error("Carte indisponible hors ligne"))}; document.head.appendChild(s); });
+  return LEAF;
+}
+function viewCarte(){
+  const f=S.mapF||(S.mapF={groupes:["lead","montage","pose","installe"],poseur:"",mode:"tous"});
+  const sansGeo=actifs().filter(d=>Number(d.etape)!==0 && !d.geo && (d.cp||d.ville)).length;
+  return `<div class="chips">${GROUPES.map(g=>`<button class="chip ${f.groupes.includes(g.k)?"on":""}" data-mact="mapgroupe" data-k="${g.k}" style="${f.groupes.includes(g.k)?`background:${g.c};border-color:${g.c}`:""}">${g.l}</button>`).join("")}</div>
+  <div class="row wrap" style="gap:8px;margin-bottom:10px">
+    <div class="seg" style="flex:1;min-width:220px"><button data-mact="mapmode" data-v="tous" class="${f.mode==="tous"?"on":""}">Tous</button><button data-mact="mapmode" data-v="tournee" class="${f.mode==="tournee"?"on":""}">Tournées</button></div>
+    <select id="mapPoseur" data-mact-change="mappeseur" style="flex:1;min-width:140px"><option value="">Tous les poseurs</option>${poseursList().map(p=>`<option ${f.poseur===p?"selected":""}>${esc(p)}</option>`).join("")}</select>
+  </div>
+  <div id="map" class="mapbox"></div>
+  <div class="small muted" id="mapInfo" style="margin-top:8px">${sansGeo?`Localisation de ${sansGeo} adresse(s) en cours…`:""}</div>
+  <div id="mapList" class="list" style="margin-top:10px"></div>`;
+}
+async function initCarte(){
+  const el=$("#map"); if(!el) return;
+  let L; try{ L=await loadLeaflet(); }catch(e){ el.innerHTML=`<div class="empty">${esc(e.message)}</div>`; return; }
+  if(MAP){ MAP.remove(); MAP=null; }
+  MAP=L.map(el,{zoomControl:true}).setView([46.6,2.4],6);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:18,attribution:"© OpenStreetMap"}).addTo(MAP);
+  MAPLAYER=L.layerGroup().addTo(MAP);
+  drawCarte(true);
+  geocodeMissing();
+}
+function mapDossiers(){
+  const f=S.mapF; let list=actifs().filter(d=>d.geo && Number(d.etape)!==0);
+  if(f.poseur) list=list.filter(d=>String(d.poseur||"").toLowerCase().includes(f.poseur.toLowerCase()));
+  if(f.mode==="tournee") return list.filter(d=>d.datePose && [5,6].includes(Number(d.etape)) && daysSince(d.datePose)<=0);
+  return list.filter(d=>f.groupes.includes((groupeOf(d)||{}).k));
+}
+function drawCarte(fit){
+  if(!MAP||!window.L) return; const L=window.L; MAPLAYER.clearLayers();
+  const list=mapDossiers(); const pts=[];
+  if(S.mapF.mode==="tournee"){
+    const byKey={}; for(const d of list){ const k=d.datePose+"|"+(d.poseur||"?"); (byKey[k]=byKey[k]||[]).push(d); }
+    const palette=["#d97706","#2459c9","#7a3fc4","#1f7a45","#cc3d7a","#0e7490"]; let i=0;
+    const rows=[];
+    for(const k of Object.keys(byKey).sort()){ const [date,pos]=k.split("|"); const ds=byKey[k]; const col=palette[i++%palette.length];
+      ds.forEach((d,n)=>{ const ll=[d.geo.lat,d.geo.lon]; pts.push(ll);
+        L.marker(ll,{icon:L.divIcon({className:"",html:`<div class="mnum" style="background:${col}">${n+1}</div>`,iconSize:[26,26],iconAnchor:[13,13]})}).bindPopup(popupHtml(d)).addTo(MAPLAYER); });
+      if(ds.length>1) L.polyline(ds.map(d=>[d.geo.lat,d.geo.lon]),{color:col,weight:3,opacity:.7,dashArray:"6 6"}).addTo(MAPLAYER);
+      rows.push(`<div class="card row"><span class="pastille" style="background:${col}"></span><div class="grow"><b>${fmtDate(date)}</b> · ${esc(pos)}<div class="small muted">${ds.map(d=>esc(fullName(d))+" ("+esc(d.ville||d.cp)+")").join(" → ")}</div></div></div>`);
+    }
+    $("#mapList").innerHTML=rows.join("")||'<div class="card empty small">Aucune pose à venir avec une adresse localisée.</div>';
+  } else {
+    for(const d of list){ const g=groupeOf(d); const ll=[d.geo.lat,d.geo.lon]; pts.push(ll);
+      L.circleMarker(ll,{radius:8,color:"#fff",weight:2,fillColor:g?g.c:"#888",fillOpacity:.95}).bindPopup(popupHtml(d)).addTo(MAPLAYER); }
+    const byDep={}; for(const d of list){ const k=dept(d.cp)||"?"; byDep[k]=(byDep[k]||0)+1; }
+    const top=Object.entries(byDep).sort((a,b)=>b[1]-a[1]).slice(0,8);
+    $("#mapList").innerHTML=`<div class="card"><h3>Top départements</h3><div class="row wrap" style="gap:6px">${top.map(([k,n])=>`<span class="chip">${esc(k)}<b>${n}</b></span>`).join("")}</div><div class="small muted" style="margin-top:8px">${list.length} dossier(s) affiché(s)</div></div>`;
+  }
+  if(fit && pts.length) MAP.fitBounds(pts,{padding:[30,30],maxZoom:11});
+}
+function popupHtml(d){ return `<b>${esc(fullName(d))}</b><br>${esc(etapeLabel(d.etape))}<br>${esc([d.adresse,d.cp,d.ville].filter(Boolean).join(" "))}${d.datePose?`<br>Pose : ${fmtDate(d.datePose)} · ${esc(d.poseur||"")}`:""}<br><a href="#" data-open="${esc(d.id)}">Ouvrir le dossier</a>`; }
+let geocoding=false;
+async function geocodeMissing(){
+  if(geocoding||!navigator.onLine) return; geocoding=true;
+  const todo=actifs().filter(d=>Number(d.etape)!==0 && !d.geo && !d.geoFail && (d.cp||d.ville));
+  let done=0;
+  for(let i=0;i<todo.length;i+=8){
+    await Promise.all(todo.slice(i,i+8).map(async d=>{
+      const cp=String(d.cp||"").replace(/\D/g,"").padStart(5,"0");
+      const q=[d.adresse,d.ville||""].filter(Boolean).join(" ")||cp;
+      try{ const r=await fetch(`https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(q)}&limit=1${/^\d{5}$/.test(cp)?"&postcode="+cp:""}`); const j=await r.json();
+        const f=j.features&&j.features[0];
+        if(f){ d.geo={lat:f.geometry.coordinates[1],lon:f.geometry.coordinates[0],score:Math.round(f.properties.score*100)/100,label:f.properties.label}; }
+        else if(/^\d{5}$/.test(cp)){ const r2=await fetch(`https://api-adresse.data.gouv.fr/search/?q=${cp}&type=municipality&limit=1`); const j2=await r2.json(); const f2=j2.features&&j2.features[0];
+          if(f2) d.geo={lat:f2.geometry.coordinates[1],lon:f2.geometry.coordinates[0],score:0,label:f2.properties.label}; else d.geoFail=true; }
+        else d.geoFail=true;
+        await saveDossier(d,{silent:true});
+      }catch(e){ /* réseau : on réessaiera */ }
+    }));
+    done=Math.min(todo.length,i+8); const info=$("#mapInfo"); if(info) info.textContent=done<todo.length?`Localisation des adresses : ${done}/${todo.length}…`:""; drawCarte(false);
+  }
+  geocoding=false; if(todo.length){ drawCarte(true); scheduleSync(); }
+}
+
+/* ============================================================
+   PLANNING VISUEL (semaine × poseurs, glisser-déposer)
+   ============================================================ */
+function mondayOf(dt){ const d=new Date(dt); const k=(d.getDay()+6)%7; d.setDate(d.getDate()-k); d.setHours(12,0,0,0); return d; }
+const iso = d => new Date(d.getTime()-d.getTimezoneOffset()*6e4).toISOString().slice(0,10);
+function viewPlanningVisuel(){
+  const start=S.week?new Date(S.week):mondayOf(new Date());
+  const days=[...Array(7)].map((_,i)=>{ const d=new Date(start); d.setDate(d.getDate()+i); return d; });
+  const ps=poseursList();
+  const enCours=actifs().filter(d=>[5,6,7].includes(Number(d.etape)));
+  const aProg=actifs().filter(d=>[5,6].includes(Number(d.etape)) && !d.datePose);
+  const occupe=(p,day)=>enCours.filter(d=>{ if(!d.datePose || String(d.poseur||"").toLowerCase()!==p.toLowerCase()) return false; const s=new Date(d.datePose+"T12:00"); const n=Math.max(1,Number(d.dureeJours)||1); const e=new Date(s); e.setDate(e.getDate()+n-1); return day>=s && day<=e; });
+  const sansPoseur=day=>enCours.filter(d=>d.datePose===iso(day) && !d.poseur);
+  const todayIso=iso(new Date());
+  let h=`<div class="row" style="gap:8px;margin-bottom:10px"><button class="btn" data-mact="week" data-v="-1">←</button><b class="grow" style="text-align:center">Semaine du ${days[0].toLocaleDateString("fr-FR",{day:"numeric",month:"long"})}</b><button class="btn" data-mact="week" data-v="0">Auj.</button><button class="btn" data-mact="week" data-v="1">→</button></div>`;
+  if(aProg.length) h+=`<div class="card" style="margin-bottom:12px"><h3>À programmer (${aProg.length}) <span class="small muted" style="text-transform:none;letter-spacing:0;font-weight:400">— glisse sur une case, ou touche pour choisir</span></h3><div class="row wrap" style="gap:6px">${aProg.map(d=>chip(d)).join("")}</div></div>`;
+  h+=`<div class="scroll-x"><table class="plan"><thead><tr><th></th>${days.map(d=>`<th class="${iso(d)===todayIso?"today":""}">${d.toLocaleDateString("fr-FR",{weekday:"short"})}<br><span class="small muted">${d.getDate()}/${d.getMonth()+1}</span></th>`).join("")}</tr></thead><tbody>`;
+  for(const p of ps){ const cap=capacite(p);
+    h+=`<tr><th class="pname">${esc(p)}<div class="small muted">${cap} équipe${cap>1?"s":""}</div></th>${days.map(day=>{ const occ=occupe(p,day); const over=occ.length>cap;
+      return `<td data-drop-day="${iso(day)}" data-drop-poseur="${esc(p)}" class="${over?"over":""} ${iso(day)===todayIso?"today":""}">${occ.map(d=>chip(d, d.datePose!==iso(day))).join("")}${over?`<div class="small neg">⚠ ${occ.length}/${cap}</div>`:""}</td>`; }).join("")}</tr>`; }
+  const sp=days.map(day=>sansPoseur(day));
+  if(sp.some(x=>x.length)) h+=`<tr><th class="pname">Sans poseur</th>${sp.map((x,i)=>`<td data-drop-day="${iso(days[i])}" data-drop-poseur="">${x.map(d=>chip(d)).join("")}</td>`).join("")}</tr>`;
+  h+=`</tbody></table></div><p class="small muted">Sur ordinateur : glisse une pose vers un autre jour ou un autre poseur. Sur téléphone : touche une pose pour la déplacer.</p>`;
+  return h;
+}
+function chip(d, suite){
+  const ok=!!d.dateCommande; const done=Number(d.etape)>=7;
+  return `<div class="pchip ${done?"done":ok?"":"warn"} ${suite?"suite":""}" draggable="true" data-drag-id="${esc(d.id)}" data-mact="plmove" data-id="${esc(d.id)}" title="${esc(fullName(d))}">
+    <b>${esc(d.nom||"?")}</b> <span>${esc(d.ville||d.cp||"")}</span>${suite?" (suite)":""}<br><span class="small">${done?"✓ posé":ok?"matériel ok":"⚠ à commander"}${Number(d.dureeJours)>1?" · "+d.dureeJours+" j":""}</span></div>`;
+}
+function openPlanMove(d){
+  openModal(`<h2 style="margin-top:0">${esc(fullName(d))}</h2><div class="small muted" style="margin-bottom:10px">${esc([d.adresse,d.cp,d.ville].filter(Boolean).join(" "))}</div>
+    <div class="form"><label class="f"><span>Date de pose</span><input type="date" id="pmDate" value="${esc(d.datePose||"")}"></label>
+    <label class="f"><span>Poseur</span><select id="pmPoseur"><option value=""></option>${poseursList().map(p=>`<option ${d.poseur===p?"selected":""}>${esc(p)}</option>`).join("")}</select></label>
+    <label class="f"><span>Durée (jours)</span><input type="text" inputmode="numeric" id="pmDuree" value="${esc(d.dureeJours||1)}"></label></div>
+    <div class="row" style="gap:8px;margin-top:12px"><button class="btn primary grow" data-mact="plsave" data-id="${esc(d.id)}">Enregistrer</button><button class="btn" data-open="${esc(d.id)}">Ouvrir le dossier</button></div>`);
+}
+async function placePose(d, day, poseur){
+  d.datePose=day; if(poseur!==undefined) d.poseur=poseur;
+  if(Number(d.etape)===5) setEtape(d,6);
+  await saveDossier(d); toast(`${fullName(d)} → ${fmtDate(day)}${d.poseur?" · "+d.poseur:""}`); render();
+}
+
+/* ============================================================
+   GESTION : Pilotage / Trésorerie / Paiements dus / Commandes
+   ============================================================ */
+function viewGestion(){
+  const t=S.gtab||"pilotage";
+  const tabs=[["pilotage","Pilotage"],["treso","Trésorerie"],["paiements","Paiements dus"],["commandes","Commandes"]];
+  let body = t==="treso"?viewFinances() : t==="paiements"?viewPaiements() : t==="commandes"?viewCommandes() : viewPilotage();
+  return `<div class="dtabs" style="margin-top:0">${tabs.map(([k,l])=>`<button data-mact="gtab" data-v="${k}" class="${t===k?"on":""}">${l}</button>`).join("")}</div>${body}`;
+}
+function monthKey(ts){ const d=new Date(ts); if(isNaN(d)) return null; return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0"); }
+function viewPilotage(){
+  const per=S.per||6; const now=new Date(); const months=[...Array(per)].map((_,i)=>{ const d=new Date(now.getFullYear(),now.getMonth()-(per-1-i),1); return monthKey(d); });
+  const all=actifs(); const from=new Date(now.getFullYear(),now.getMonth()-(per-1),1).getTime();
+  const leads=all.filter(d=>d.createdAt>=from && !d.aVerifier);
+  const poses=all.filter(d=>Number(d.etape)>=7 && Number(d.etape)!==0 && (d.dateInstallation||d.datePose) && new Date(d.dateInstallation||d.datePose).getTime()>=from);
+  const sum=(a,f)=>a.reduce((s,d)=>s+f(d),0);
+  const ca=sum(poses,recettesPrev), mg=sum(poses,margePrev);
+  const byM=months.map(m=>{ const p=poses.filter(d=>monthKey(d.dateInstallation||d.datePose)===m); return {m,ca:sum(p,recettesPrev),mg:sum(p,margePrev),n:p.length,enc:sum(p,encaisse)}; });
+  const delais=poses.filter(d=>d.createdAt && !d.aVerifier).map(d=>(new Date(d.dateInstallation||d.datePose)-d.createdAt)/864e5).filter(x=>x>=0);
+  const sources=[...new Set(all.map(d=>d.source||"Autre"))];
+  const cl=SET().coutsLead;
+  const rows=sources.map(s=>{ const L=all.filter(d=>(d.source||"Autre")===s); const Lp=L.filter(d=>d.createdAt>=from);
+    const inst=L.filter(d=>Number(d.etape)>=7 && Number(d.etape)!==0); const instP=inst.filter(d=>new Date(d.dateInstallation||d.datePose).getTime()>=from);
+    const cout=(Number(cl[s])||0)*Lp.length+sum(instP,d=>num(d.commission));
+    return {s,leads:Lp.length,inst:instP.length,taux:Lp.length?Math.round(100*Lp.filter(d=>Number(d.etape)>=7).length/Lp.length):null,mg:sum(instP,margePrev),cout,cpi:instP.length?cout/instP.length:null}; })
+    .filter(r=>r.leads||r.inst).sort((a,b)=>b.mg-a.mg);
+  const funnel=ETAPES.filter(e=>e.n>0).map(e=>({l:e.l,n:all.filter(d=>Number(d.etape)===e.n).length}));
+  const maxF=Math.max(1,...funnel.map(f=>f.n));
+  return `<div class="row" style="gap:8px;margin-bottom:12px"><span class="small muted grow">Période</span>${[3,6,12].map(p=>`<button class="chip ${per===p?"on":""}" data-mact="per" data-v="${p}">${p} mois</button>`).join("")}</div>
+  <div class="grid kpis">
+    <div class="card kpi"><div class="v">${poses.length}</div><div class="l">Chantiers posés</div></div>
+    <div class="card kpi"><div class="v money">${eur(ca)}</div><div class="l">CA posé (CEE + MPR + RAC)</div></div>
+    <div class="card kpi"><div class="v money ${mg<0?"neg":""}">${eur(mg)}</div><div class="l">Marge prévisionnelle · ${poses.length?eur(mg/poses.length):"—"} / chantier</div></div>
+    <div class="card kpi"><div class="v">${delais.length?Math.round(delais.reduce((a,b)=>a+b,0)/delais.length)+" j":"—"}</div><div class="l">Délai moyen lead → pose</div></div>
+  </div>
+  <h2>CA et marge par mois</h2>
+  <div class="card">${barChart(byM)}</div>
+  <h2>Rentabilité par source</h2>
+  <div class="card scroll-x" style="padding:4px 8px"><table class="t"><thead><tr><th>Source</th><th class="r">Leads</th><th class="r">Posés</th><th class="r">Transfo</th><th class="r">Coût acquisition</th><th class="r">Coût / chantier</th><th class="r">Marge</th></tr></thead><tbody>
+  ${rows.map(r=>`<tr style="cursor:default"><td><b>${esc(r.s)}</b></td><td class="r">${r.leads}</td><td class="r">${r.inst}</td><td class="r">${r.taux==null?"—":r.taux+" %"}</td><td class="r money">${eur(r.cout)}</td><td class="r money">${r.cpi==null?"—":eur(r.cpi)}</td><td class="r money ${r.mg<0?"neg":""}">${eur(r.mg)}</td></tr>`).join("")||'<tr><td colspan="7" class="empty">Pas encore de données sur la période.</td></tr>'}
+  </tbody></table><div class="small muted" style="padding:6px">Coût acquisition = prix du lead (Réglages) × leads + commissions des chantiers posés. Les dossiers importés « à vérifier » sont exclus des leads.</div></div>
+  <h2>Entonnoir actuel</h2>
+  <div class="card grid" style="gap:6px">${funnel.map(f=>`<div class="row" style="gap:8px"><span class="small" style="width:150px">${esc(f.l)}</span><div class="grow" style="background:var(--line);border-radius:6px;height:16px;overflow:hidden"><div style="width:${Math.round(100*f.n/maxF)}%;height:100%;background:var(--brand-2)"></div></div><b style="width:36px;text-align:right">${f.n}</b></div>`).join("")}</div>`;
+}
+function barChart(rows){
+  const W=640,H=220,pl=46,pb=26,pt=10; const max=Math.max(1000,...rows.map(r=>Math.max(r.ca,r.mg)));
+  const step=(W-pl)/rows.length; const bw=Math.min(26,step/3);
+  const y=v=>H-pb-(H-pb-pt)*Math.max(0,v)/max;
+  const ticks=[0,.25,.5,.75,1].map(k=>k*max);
+  const mois=m=>{ const [a,b]=m.split("-"); return new Date(a,b-1,1).toLocaleDateString("fr-FR",{month:"short"}); };
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto" role="img" aria-label="CA et marge par mois">
+    ${ticks.map(t=>`<line x1="${pl}" x2="${W}" y1="${y(t)}" y2="${y(t)}" stroke="var(--line)"/><text x="${pl-6}" y="${y(t)+4}" text-anchor="end" font-size="10" fill="var(--muted)">${Math.round(t/1000)}k</text>`).join("")}
+    ${rows.map((r,i)=>{ const x=pl+i*step+step/2; return `<rect x="${x-bw-1}" y="${y(r.ca)}" width="${bw}" height="${H-pb-y(r.ca)}" rx="3" fill="var(--brand-2)"><title>${mois(r.m)} : CA ${eur(r.ca)} (${r.n} chantiers)</title></rect>
+      <rect x="${x+1}" y="${y(r.mg)}" width="${bw}" height="${H-pb-y(r.mg)}" rx="3" fill="var(--accent)"><title>${mois(r.m)} : marge ${eur(r.mg)}</title></rect>
+      <text x="${x}" y="${H-8}" text-anchor="middle" font-size="11" fill="var(--muted)">${mois(r.m)}</text>${r.n?`<text x="${x}" y="${y(r.ca)-4}" text-anchor="middle" font-size="10" fill="var(--ink)">${r.n}</text>`:""}`; }).join("")}
+  </svg><div class="row small muted" style="gap:14px"><span><span class="pastille" style="background:var(--brand-2);display:inline-block"></span> CA</span><span><span class="pastille" style="background:var(--accent);display:inline-block"></span> Marge</span><span>chiffre = nb de chantiers</span></div>`;
+}
+function viewPaiements(){
+  const inst=actifs().filter(d=>Number(d.etape)>=7 && Number(d.etape)!==0);
+  const dus={};
+  const add=(benef,type,d,montant)=>{ (dus[benef]=dus[benef]||{items:[],tot:0}); dus[benef].items.push({type,d,montant}); dus[benef].tot+=montant; };
+  for(const d of inst){
+    if(num(d.prixPoseur)>0 && !d.poseurPayeLe) add(d.poseur||"Poseur ?","poseur",d,num(d.prixPoseur));
+    if(num(d.commission)>0 && !d.commissionPayeeLe) add(d.regie||d.source||"Apporteur ?","commission",d,num(d.commission));
+  }
+  const keys=Object.keys(dus).sort((a,b)=>dus[b].tot-dus[a].tot);
+  const total=keys.reduce((s,k)=>s+dus[k].tot,0);
+  return `<div class="card kpi" style="margin-bottom:12px"><div class="v money">${eur(total)}</div><div class="l">Total dû aux poseurs et apporteurs (chantiers posés)</div></div>
+  ${keys.map(k=>`<h2>${esc(k)} <span class="muted small">${eur(dus[k].tot)}</span></h2><div class="list">${dus[k].items.sort((a,b)=>String(a.d.datePose).localeCompare(String(b.d.datePose))).map(it=>`
+    <div class="card row"><div class="grow" data-open="${esc(it.d.id)}" style="cursor:pointer"><b>${esc(fullName(it.d))}</b><div class="small muted">${it.type==="poseur"?"Pose":"Commission"} · posé ${fmtDate(it.d.dateInstallation||it.d.datePose)||"?"}${it.d.statutMPR==="Payé"&&it.d.statutOPX==="Payé"?" · client soldé":""}</div></div>
+    <b class="money">${eur(it.montant)}</b><button class="btn" data-mact="payer" data-id="${esc(it.d.id)}" data-type="${it.type}">Payé</button></div>`).join("")}</div>`).join("")||'<div class="card empty">Rien à payer. 👌</div>'}`;
+}
+function viewCommandes(){
+  const all=actifs();
+  const aCmd=all.filter(d=>[5,6].includes(Number(d.etape)) && !d.dateCommande).sort((a,b)=>String(a.datePose||"9").localeCompare(String(b.datePose||"9")));
+  const enCours=all.filter(d=>d.dateCommande && !d.livreLe && Number(d.etape)>=5 && Number(d.etape)<=7);
+  const row=(d,btns)=>`<div class="card row"><div class="grow" data-open="${esc(d.id)}" style="cursor:pointer"><b>${esc(fullName(d))}</b> <span class="small muted">· ${esc(d.ville||d.cp||"")}</span>
+    <div class="small">${esc(d.materiel||d.produit||"matériel à préciser")}</div><div class="small muted">${esc(d.fournisseur||"fournisseur ?")}${d.prixMateriel?" · "+eur(d.prixMateriel):""}${d.datePose?" · pose "+fmtDate(d.datePose):""}${d.numCommande?" · n° "+esc(d.numCommande):""}</div></div>${btns}</div>`;
+  // comparatif prix
+  const hist=all.filter(d=>d.fournisseur && num(d.prixMateriel)>0);
+  const fours=[...new Set(hist.map(d=>d.fournisseur))]; const prods=[...new Set(hist.map(d=>d.produit||"Autre"))];
+  const cell=(f,p)=>{ const l=hist.filter(d=>d.fournisseur===f && (d.produit||"Autre")===p); if(!l.length) return "—"; const avg=l.reduce((s,d)=>s+num(d.prixMateriel),0)/l.length; return `${eur(avg)}<div class="small muted">${l.length} cmd</div>`; };
+  return `<h2 style="margin-top:0">À commander <span class="muted small">(${aCmd.length})</span></h2><div class="list">${aCmd.map(d=>row(d,`<div class="grid" style="gap:6px"><button class="btn" data-mact="cmdmail" data-id="${esc(d.id)}">Bon par mail</button><button class="btn primary" data-mact="cmdok" data-id="${esc(d.id)}">Commandé</button></div>`)).join("")||'<div class="card empty small">Tout est commandé.</div>'}</div>
+  <h2>En attente de livraison <span class="muted small">(${enCours.length})</span></h2><div class="list">${enCours.map(d=>row(d,`<button class="btn" data-mact="livre" data-id="${esc(d.id)}">Livré</button>`)).join("")||'<div class="card empty small">Aucune livraison en attente.</div>'}</div>
+  <h2>Comparatif des prix d'achat</h2><div class="card scroll-x" style="padding:4px 8px"><table class="t"><thead><tr><th>Produit</th>${fours.map(f=>`<th class="r">${esc(f)}</th>`).join("")}</tr></thead><tbody>${prods.map(p=>`<tr style="cursor:default"><td><b>${esc(p)}</b></td>${fours.map(f=>`<td class="r money">${cell(f,p)}</td>`).join("")}</tr>`).join("")}</tbody></table><div class="small muted" style="padding:6px">Prix moyen d'achat constaté sur tes dossiers.</div></div>`;
+}
+function bonCommandeMail(d){
+  const f=SET().fournisseurs.find(x=>x.nom===d.fournisseur)||{}; const so=SET().societe;
+  const sujet=`Commande ${so.nom} — ${d.materiel||d.produit||"PAC"} — ${fullName(d)}`;
+  const corps=`Bonjour,\n\nMerci de bien vouloir nous préparer la commande suivante :\n\n- Matériel : ${d.materiel||d.produit||""}\n- Quantité : 1\n- Chantier : ${fullName(d)}, ${[d.adresse,d.cp,d.ville].filter(Boolean).join(" ")}\n- Date de pose prévue : ${d.datePose?new Date(d.datePose).toLocaleDateString("fr-FR"):"à confirmer"}\n${d.prixMateriel?"- Prix convenu : "+eur(d.prixMateriel)+"\n":""}\nMerci de nous confirmer la disponibilité et le délai de livraison.\n\nCordialement,\n${so.nom}\n${so.tel||""}`;
+  return {to:f.email||"",sujet,corps};
+}
+
+/* ============================================================
+   COMMUNICATION 1 CLIC
+   ============================================================ */
+function fillTpl(txt,d){
+  const so=SET().societe; const pieces=[!d.pAvis&&"votre dernier avis d'impôt",!d.pCni&&"votre pièce d'identité",!d.pTaxeFonciere&&"votre taxe foncière"].filter(Boolean).join(", ")||"aucune pièce";
+  return txt.replace(/\{prenom\}/g,d.prenom||d.nom||"").replace(/\{nom\}/g,d.nom||"").replace(/\{date_pose\}/g,d.datePose?new Date(d.datePose).toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long"}):"(date à fixer)")
+    .replace(/\{poseur\}/g,d.poseur||"").replace(/\{pieces\}/g,pieces).replace(/\{societe\}/g,so.nom||"").replace(/\{tel_societe\}/g,so.mobile||so.tel||"").replace(/\{avis_google\}/g,so.avisGoogle||"");
+}
+function telIntl(t){ let n=String(t||"").replace(/\D/g,""); if(n.startsWith("0")) n="33"+n.slice(1); return n; }
+function openContact(d){
+  const ms=SET().modeles; const cur=S.ctpl||ms[0].id; const m=ms.find(x=>x.id===cur)||ms[0];
+  const txt=fillTpl(m.txt,d);
+  openModal(`<h2 style="margin-top:0">Contacter ${esc(fullName(d))}</h2>
+    <div class="chips">${ms.map(x=>`<button class="chip ${x.id===m.id?"on":""}" data-mact="ctpl" data-v="${x.id}">${esc(x.nom)}</button>`).join("")}</div>
+    <textarea id="ctxt" style="min-height:130px">${esc(txt)}</textarea>
+    <div class="grid" style="grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px">
+      <button class="btn primary" data-mact="send" data-c="sms" ${d.tel?"":"disabled"}>SMS</button>
+      <button class="btn primary" data-mact="send" data-c="whatsapp" ${d.tel?"":"disabled"}>WhatsApp</button>
+      <button class="btn primary" data-mact="send" data-c="mail" ${d.email?"":"disabled"}>Mail</button>
+    </div>
+    <button class="btn block" style="margin-top:8px" data-mact="send" data-c="appel" ${d.tel?"":"disabled"}>📞 Appeler ${esc(d.tel||"")}</button>
+    <div class="small muted" style="margin-top:8px">Le message s'ouvre dans ton appli SMS, WhatsApp ou mail : tu vérifies et tu envoies. Chaque contact est noté dans l'historique du dossier.</div>`);
+}
+async function logComm(d,canal,modele,txt){ (d.comms=d.comms||[]).push({t:Date.now(),canal,modele,txt:String(txt||"").slice(0,500)}); d.dernierContact=Date.now(); await saveDossier(d,{silent:true}); scheduleSync(); }
+
+/* ============================================================
+   RÉGLAGES (lot 1)
+   ============================================================ */
+function viewReglagesPlus(){
+  if(!isAdmin()) return "";
+  const s=SET();
+  return `<h2>Poseurs et capacité</h2><div class="card grid">${s.poseurs.map((p,i)=>`<div class="row" style="gap:8px"><input type="text" class="rs" data-rs="poseurs.${i}.nom" value="${esc(p.nom)}" class="grow"><label class="small muted row" style="gap:6px;white-space:nowrap">équipes <input type="text" inputmode="numeric" class="rs" data-rs="poseurs.${i}.capacite" value="${esc(p.capacite)}" style="width:60px"></label><button class="btn" data-mact="rmposeur" data-i="${i}">✕</button></div>`).join("")}
+    <button class="btn" data-mact="addposeur">+ Ajouter un poseur</button><div class="small muted">Les codes PIN se règlent dans l'onglet « Config » de ta Google Sheet.</div></div>
+  <h2>Coût d'un lead par source</h2><div class="card form">${Object.keys(s.coutsLead).map(k=>`<label class="f"><span>${esc(k)} (€)</span><input type="text" inputmode="decimal" class="rs" data-rs="coutsLead.${esc(k)}" value="${esc(s.coutsLead[k])}"></label>`).join("")}</div>
+  <h2>Fournisseurs</h2><div class="card grid">${s.fournisseurs.map((f,i)=>`<div class="form"><label class="f"><span>Nom</span><input type="text" class="rs" data-rs="fournisseurs.${i}.nom" value="${esc(f.nom)}"></label><label class="f"><span>E-mail commandes</span><input type="email" class="rs" data-rs="fournisseurs.${i}.email" value="${esc(f.email)}"></label></div>`).join("")}</div>
+  <h2>Société (messages et documents)</h2><div class="card form">${[["nom","Nom commercial"],["tel","Téléphone"],["mobile","Mobile"],["email","E-mail"],["site","Site web"],["avisGoogle","Lien avis Google"]].map(([k,l])=>`<label class="f ${k==="avisGoogle"?"full":""}"><span>${l}</span><input type="text" class="rs" data-rs="societe.${k}" value="${esc(s.societe[k]||"")}"></label>`).join("")}</div>
+  <h2>Modèles de messages</h2><div class="small muted" style="margin:-4px 0 8px">Variables : {prenom} {nom} {date_pose} {poseur} {pieces} {societe} {tel_societe} {avis_google}</div>
+  <div class="grid">${s.modeles.map((m,i)=>`<div class="card grid"><input type="text" class="rs" data-rs="modeles.${i}.nom" value="${esc(m.nom)}" style="font-weight:600"><textarea class="rs" data-rs="modeles.${i}.txt">${esc(m.txt)}</textarea><button class="btn" data-mact="rmmodele" data-i="${i}">Supprimer ce modèle</button></div>`).join("")}<button class="btn" data-mact="addmodele">+ Nouveau modèle</button></div>
+  <button class="btn primary block" style="margin-top:14px" data-mact="savesettings">Enregistrer les réglages</button>`;
+}
+function setPath(obj,path,val){ const ks=path.split("."); let o=obj; for(let i=0;i<ks.length-1;i++){ const k=ks[i]; if(o[k]==null) o[k]=/^\d+$/.test(ks[i+1])?[]:{}; o=o[k]; } o[ks[ks.length-1]]=val; }
+function editableSettings(){ if(!CFG.settings) CFG.settings=JSON.parse(JSON.stringify(SET())); for(const k of Object.keys(DEFAULT_SET)) if(CFG.settings[k]==null) CFG.settings[k]=JSON.parse(JSON.stringify(DEFAULT_SET[k])); return CFG.settings; }
+
+/* ============================================================
+   Événements du lot 1
+   ============================================================ */
+document.addEventListener("click", async e=>{
+  const b=e.target.closest("[data-mact]"); if(!b) return;
+  const act=b.dataset.mact; const id=b.dataset.id; const d=id?S.dossiers.get(id):S.dossiers.get(S.param);
+  if(b.tagName==="INPUT") { if(act==="toggleperdus"){ S.showPerdus=b.checked; render(); } return; }
+  if(act==="plmove" && e.target.closest(".pchip")){ e.preventDefault(); e.stopPropagation(); openPlanMove(d); return; }
+  e.preventDefault(); e.stopPropagation();
+  switch(act){
+    case "kadvance": { const n=Number(d.etape); if(n>=9||n===0) break; setEtape(d,n+1); await saveDossier(d); toast(fullName(d)+" → "+etapeLabel(d.etape)); render(); break; }
+    case "dossview": S.dossView=b.dataset.v; try{localStorage.setItem("ecoroy_dossview",S.dossView)}catch(_){ } render(); break;
+    case "mapgroupe": { const g=S.mapF.groupes; const i=g.indexOf(b.dataset.k); if(i>=0) g.splice(i,1); else g.push(b.dataset.k); S._keepMap=true; render(); break; }
+    case "mapmode": S.mapF.mode=b.dataset.v; S._keepMap=true; render(); break;
+    case "week": { const cur=S.week?new Date(S.week):mondayOf(new Date()); if(b.dataset.v==="0") S.week=null; else { cur.setDate(cur.getDate()+7*Number(b.dataset.v)); S.week=cur.getTime(); } render(); break; }
+    case "plsave": { const day=$("#pmDate").value; d.dureeJours=$("#pmDuree").value||1; closeModal(); if(day) await placePose(d,day,$("#pmPoseur").value); else { d.poseur=$("#pmPoseur").value; await saveDossier(d); render(); } break; }
+    case "gtab": S.gtab=b.dataset.v; render(); break;
+    case "per": S.per=Number(b.dataset.v); render(); break;
+    case "payer": { const t=b.dataset.type; if(!(await confirmBox(`Marquer ${t==="poseur"?"la pose":"la commission"} de ${fullName(d)} comme payée ?`))) break; if(t==="poseur") d.poseurPayeLe=today(); else d.commissionPayeeLe=today(); await saveDossier(d); render(); break; }
+    case "cmdok": { d.dateCommande=today(); await saveDossier(d); toast("Commande notée"); render(); break; }
+    case "livre": d.livreLe=today(); await saveDossier(d); toast("Livraison notée"); render(); break;
+    case "cmdmail": { const m=bonCommandeMail(d); if(!m.to) toast("Ajoute l'e-mail de "+(d.fournisseur||"ce fournisseur")+" dans Réglages");
+      location.href=`mailto:${encodeURIComponent(m.to)}?subject=${encodeURIComponent(m.sujet)}&body=${encodeURIComponent(m.corps)}`; await logComm(d,"commande",d.fournisseur||"",m.sujet); break; }
+    case "contact": openContact(d); break;
+    case "ctpl": S.ctpl=b.dataset.v; openContact(d); break;
+    case "send": { const c=b.dataset.c; const txt=($("#ctxt")||{}).value||""; const m=(SET().modeles.find(x=>x.id===(S.ctpl||SET().modeles[0].id))||{}).nom||"";
+      const tel=String(d.tel||"").replace(/[^\d+]/g,"");
+      const url = c==="sms" ? `sms:${tel}${/iPhone|iPad|Mac/.test(navigator.userAgent)?"&":"?"}body=${encodeURIComponent(txt)}` : c==="whatsapp" ? `https://wa.me/${telIntl(d.tel)}?text=${encodeURIComponent(txt)}` : c==="mail" ? `mailto:${encodeURIComponent(d.email)}?subject=${encodeURIComponent(SET().societe.nom+" — votre projet")}&body=${encodeURIComponent(txt)}` : `tel:${tel}`;
+      await logComm(d,c,c==="appel"?"":m,c==="appel"?"":txt); closeModal();
+      if(c==="whatsapp") window.open(url,"_blank"); else location.href=url; break; }
+    case "addposeur": editableSettings().poseurs.push({nom:"Nouveau",capacite:1}); render(); break;
+    case "rmposeur": editableSettings().poseurs.splice(Number(b.dataset.i),1); render(); break;
+    case "addmodele": editableSettings().modeles.push({id:"m"+Date.now(),nom:"Nouveau modèle",txt:"Bonjour {prenom}, "}); render(); break;
+    case "rmmodele": editableSettings().modeles.splice(Number(b.dataset.i),1); render(); break;
+    case "savesettings": await pushSettings(); render(); break;
+  }
+}, true);
+document.addEventListener("change", e=>{
+  const el=e.target;
+  if(el.id==="mapPoseur"){ S.mapF.poseur=el.value; S._keepMap=true; render(); return; }
+  if(el.classList && el.classList.contains("rs")){ const v=el.value; setPath(editableSettings(), el.dataset.rs, /capacite|coutsLead/.test(el.dataset.rs)?num(v):v); }
+});
+// Glisser-déposer (ordinateur) : kanban et planning
+document.addEventListener("dragstart", e=>{ const c=e.target.closest&&e.target.closest("[data-drag-id]"); if(!c) return; e.dataTransfer.setData("text/plain",c.dataset.dragId); e.dataTransfer.effectAllowed="move"; c.classList.add("dragging"); });
+document.addEventListener("dragend", e=>{ document.querySelectorAll(".dragging,.dropover").forEach(x=>x.classList.remove("dragging","dropover")); });
+document.addEventListener("dragover", e=>{ const t=e.target.closest&&e.target.closest("[data-drop-etape],[data-drop-day]"); if(!t) return; e.preventDefault(); document.querySelectorAll(".dropover").forEach(x=>x!==t&&x.classList.remove("dropover")); t.classList.add("dropover"); });
+document.addEventListener("drop", async e=>{
+  const t=e.target.closest&&e.target.closest("[data-drop-etape],[data-drop-day]"); if(!t) return; e.preventDefault();
+  const d=S.dossiers.get(e.dataTransfer.getData("text/plain")); if(!d) return;
+  if(t.dataset.dropEtape!==undefined){ const n=Number(t.dataset.dropEtape); if(n!==Number(d.etape)){ setEtape(d,n); await saveDossier(d); toast(fullName(d)+" → "+etapeLabel(n)); render(); } }
+  else await placePose(d, t.dataset.dropDay, t.dataset.dropPoseur);
+});
 
 /* ---------- Démarrage ---------- */
 (async function boot(){
