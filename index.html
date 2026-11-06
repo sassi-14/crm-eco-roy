@@ -554,7 +554,7 @@ function viewPipeline(){
   const f=FILTRES.find(x=>x[0]===S.filter)||FILTRES[0];
   let list=all.filter(f[2]);
   if(q) list=all.filter(d=>[d.nom,d.prenom,d.tel,d.ville,d.cp,d.email,d.poseur].join(" ").toLowerCase().includes(q));
-  list.sort((a,b)=>(Number(a.etape)||99)-(Number(b.etape)||99) || b.updatedAt-a.updatedAt);
+  list.sort((a,b)=>(Number(a.etape)||99)-(Number(b.etape)||99) || b.createdAt-a.createdAt);
   return `
   <input type="search" id="q" placeholder="Rechercher nom, tél, ville…" value="${esc(S.q)}" style="margin-bottom:10px">
   <div class="chips">${FILTRES.map(([k,l,fn])=>`<button class="chip ${S.filter===k&&!q?"on":""}" data-filter="${k}">${l}<b>${all.filter(fn).length}</b></button>`).join("")}</div>
@@ -576,7 +576,7 @@ function viewDossier(d){
   const c=couleurOf(d); const e=Number(d.etape); const al=alertsFor(d);
   const tabs=[["client","Client"],["elig","Éligibilité"],["admin","OPX / MPR"],["chantier","Chantier"],["fin","Finances"],["hist","Historique"]];
   let body="";
-  if(S.tab==="client") body=`
+  if(S.tab==="client") body=qualifCard(d)+`
     <div class="form three">
       ${F(d,"nom","Nom","text")}${F(d,"prenom","Prénom","text")}${F(d,"tel","Téléphone","tel")}
       ${F(d,"email","E-mail","email")}${F(d,"source","Source","select",{options:SOURCES})}${F(d,"produit","Produit","select",{options:PRODUITS})}
@@ -810,7 +810,8 @@ document.addEventListener("click", async e=>{
     case "demo": startDemo(); break;
     case "back": history.back(); break;
     case "sync": S.sync.err=""; syncNow(); break;
-    case "new": openNewModal(); break;
+    case "new": openWizard(null); break;
+    case "qualifier": openWizard(d); break;
     case "next": { const n=Number(d.etape); setEtape(d, n>=9?9:n+1); await saveDossier(d); render(); toast("→ "+etapeLabel(d.etape)); break; }
     case "verifok": d.aVerifier=false; await saveDossier(d); render(); break;
     case "encaisser": { const k=a.dataset.k; d["encaisse"+k]=d["valo"+k]||""; if(k==="CEE") d.statutOPX="Payé"; else d.statutMPR="Payé";
@@ -867,6 +868,7 @@ window.addEventListener("popstate",()=>{ if(S.view==="dossier"){ S.view=isPoseur
 /* ----- Modales ----- */
 function openModal(html){ closeModal(); const m=document.createElement("div"); m.className="modal"; m.id="modal"; m.innerHTML=`<div class="sheet">${html}<div style="margin-top:12px"><button class="btn block" data-act="closemodal">Fermer</button></div></div>`; m.addEventListener("click",ev=>{ if(ev.target===m) closeModal(); }); document.body.appendChild(m); }
 function closeModal(){ const m=$("#modal"); if(m) m.remove(); }
+document.addEventListener("click",e=>{ const m=$("#modal"); if(m && e.target===m && S.wiz){ S.wiz=null; m.remove(); } });
 function openNewModal(){
   openModal(`<h2 style="margin-top:0">Nouveau dossier</h2><div class="form">
     <label class="f"><span>Nom</span><input type="text" id="nNom"></label><label class="f"><span>Prénom</span><input type="text" id="nPrenom"></label>
@@ -887,6 +889,152 @@ async function createFromModal(){
 function exportJSON(){
   const blob=new Blob([JSON.stringify(actifs(),null,1)],{type:"application/json"}); const a=document.createElement("a");
   a.href=URL.createObjectURL(blob); a.download="crm-eco-roy-"+today()+".json"; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+
+
+/* ============================================================
+   Formulaire de qualification dynamique (nouveau lead / lead à qualifier)
+   Les questions s'enchaînent selon les réponses ; à la fin, tout
+   remplit la fiche et le dossier s'ouvre sur sa première page.
+   ============================================================ */
+const isGazFioul = a => /gaz|fioul|bois/i.test(a.chauffage||"");
+const isElec = a => /lectrique/i.test(a.chauffage||"");
+const hasRad = a => /radiateur/i.test(a.emetteursType||"");
+const WQ = [
+  {id:"source", t:"D'où vient ce client ?", type:"choice", opts:SOURCES},
+  {id:"contact", t:"Coordonnées du client", type:"fields", fields:[["nom","Nom","text"],["prenom","Prénom","text"],["tel","Téléphone","tel"],["email","E-mail","email"],["adresse","Adresse","text",true],["cp","Code postal","cp"],["ville","Ville","text"]],
+    valid:a=>(a.nom||a.tel)?"":"Mets au moins le nom ou le téléphone."},
+  {id:"habitat", t:"Quel type de logement ?", type:"choice", opts:["Maison individuelle","Appartement"]},
+  {id:"chauffIndiv", t:"Le chauffage est-il individuel ?", type:"choice", opts:["Oui","Non, chauffage collectif"], show:a=>a.habitat==="Appartement"},
+  {id:"proprietaire", t:"Le client est…", type:"choice", opts:["Propriétaire occupant","Propriétaire bailleur","Locataire","SCI"]},
+  {id:"plus15", t:"Le logement a plus de 15 ans ?", type:"choice", opts:["Oui","Non","Ne sait pas"], hint:"MaPrimeRénov' exige un logement construit depuis plus de 15 ans."},
+  {id:"chauffage", t:"Comment se chauffe-t-il aujourd'hui ?", type:"choice", opts:CHAUFFAGES},
+  {id:"ageChaudiere", t:"La chaudière a quel âge ?", type:"choice", opts:["Moins de 10 ans","10 à 20 ans","Plus de 20 ans","Ne sait pas"], show:isGazFioul},
+  {id:"emplacement", t:"Où se trouve la chaudière ?", type:"choice", opts:["Cuisine","Garage","Cave / sous-sol","Chaufferie / local technique","Autre"], show:isGazFioul},
+  {id:"emetteursType", t:"Quels émetteurs de chaleur ?", type:"choice", opts:["Radiateurs à eau","Plancher chauffant","Radiateurs + plancher"], show:a=>!isElec(a)},
+  {id:"nbRad", t:"Combien de radiateurs à eau ?", type:"number", unit:"radiateurs", show:hasRad},
+  {id:"typeRad", t:"Les radiateurs sont en…", type:"choice", opts:["Fonte","Acier","Aluminium","Ne sait pas"], show:hasRad},
+  {id:"ecs", t:"Comment est produite l'eau chaude ?", type:"choice", opts:["Par la chaudière","Ballon électrique","Ballon thermodynamique","Autre"]},
+  {id:"surface", t:"Surface chauffée et niveaux", type:"fields", fields:[["surface","Surface (m²)","num"],["niveaux","Nombre de niveaux","num"]]},
+  {id:"compteur", t:"Compteur électrique", type:"choice", opts:["Mono","Tri","Ne sait pas"]},
+  {id:"foyer", t:"Composition du foyer et revenus", type:"fields", fields:[["nbPersonnes","Personnes au foyer","num"],["rfr","Revenu fiscal de référence (€)","num"]], hint:"Ligne « revenu fiscal de référence » de l'avis d'impôt. Laisse vide s'il ne sait pas.", live:"couleur"},
+  {id:"deja", t:"A-t-il déjà eu une PAC ou un SSC aidé (offre 1 €) ?", type:"choice", opts:["Non","Oui"]},
+  {id:"delai", t:"Quand veut-il faire les travaux ?", type:"choice", opts:["Dès que possible","Dans les 3 mois","Plus tard / se renseigne"]},
+  {id:"previsite", t:"Une prévisite est nécessaire ?", type:"choice", opts:["Non","Oui"]},
+  {id:"resume", t:"Résultat", type:"summary"},
+];
+function wizVisible(){ const a=S.wiz.a; return WQ.filter(q=>!q.show||q.show(a)); }
+function wizAnalyse(a){
+  const bloq=[], warn=[]; let s=0;
+  if(a.habitat==="Appartement" && /collectif/.test(a.chauffIndiv||"")) bloq.push("Chauffage collectif : PAC individuelle impossible");
+  if(a.proprietaire==="Locataire") warn.push("Locataire : il faut l'accord et le dossier du propriétaire");
+  if(a.proprietaire==="Propriétaire bailleur") warn.push("Bailleur : MPR possible avec engagement de location");
+  if(a.plus15==="Non") bloq.push("Logement de moins de 15 ans : pas de MaPrimeRénov'");
+  if(isElec(a)) bloq.push("Chauffage électrique sans circuit d'eau : pas de PAC air/eau (proposer ballon thermo ou PAC air/air)");
+  if(a.deja==="Oui") bloq.push("A déjà bénéficié d'une PAC/SSC aidé : CEE et MPR probablement refusés");
+  const coul=couleurCalc(a.rfr,a.nbPersonnes,a.cp);
+  if(/^Propri/.test(a.proprietaire||"") && a.proprietaire!=="Propriétaire bailleur") s+=20;
+  if(a.habitat==="Maison individuelle") s+=15;
+  if(isGazFioul(a)) s+=20;
+  if(num(a.surface)>=70) s+=10;
+  if(a.plus15==="Oui") s+=5;
+  s += ({bleu:25,jaune:20,violet:10,rose:0})[coul]||0;
+  s += ({"Dès que possible":10,"Dans les 3 mois":5})[a.delai]||0;
+  if(/Plus de 20/.test(a.ageChaudiere||"")) s+=5;
+  if(bloq.length) s=Math.min(s,20);
+  s=Math.max(0,Math.min(100,s));
+  let produit="PAC air/eau";
+  if(isElec(a)) produit="Ballon thermodynamique";
+  else if(a.ecs==="Ballon électrique") produit="PAC + ballon thermo";
+  if(coul==="rose") warn.push("Profil rose : pas de MPR par geste, dossier CEE seul");
+  if(a.compteur==="Mono" && num(a.surface)>=180) warn.push("Grande surface en monophasé : vérifier la puissance de la PAC");
+  if(a.previsite==="Oui") warn.push("Prévisite à planifier");
+  return {score:s, temp:s>=70?"chaud":s>=45?"tiède":"froid", couleur:coul, produit, bloq, warn, aide:isPAC({produit})&&coul?AIDE_MPR_PAC[coul]:null};
+}
+function openWizard(d){
+  const a={};
+  if(d){ for(const k of ["source","nom","prenom","tel","email","adresse","cp","ville","habitat","proprietaire","chauffage","surface","compteur","nbPersonnes","rfr"]) if(d[k]) a[k]=d[k]; Object.assign(a,d.qualif||{}); }
+  if(!a.source) a.source = d ? d.source : "";
+  S.wiz={a, i:0, dossierId:d?d.id:null};
+  renderWizard();
+}
+function renderWizard(){
+  const vis=wizVisible(); const i=Math.min(S.wiz.i,vis.length-1); S.wiz.i=i; const q=vis[i]; const a=S.wiz.a;
+  let body="";
+  if(q.type==="choice") body=`<div class="grid" style="grid-template-columns:1fr">${q.opts.map(o=>`<button class="btn wopt ${a[q.id]===o?"primary":""}" data-act="wchoose" data-v="${esc(o)}" style="justify-content:flex-start;padding:13px 14px">${esc(o)}</button>`).join("")}</div>`;
+  if(q.type==="number") body=`<div class="row"><input type="text" inputmode="numeric" class="wf" data-k="${q.id}" value="${esc(a[q.id]||"")}" style="font-size:20px"><span class="muted">${esc(q.unit||"")}</span></div>`;
+  if(q.type==="fields") body=`<div class="form">${q.fields.map(([k,l,t,full])=>`<label class="f ${full?"full":""}"><span>${l}</span><input type="${t==="num"||t==="cp"?"text":t}" ${t==="num"||t==="cp"?'inputmode="numeric"':""} class="wf" data-k="${k}" value="${esc(a[k]||"")}"></label>`).join("")}</div>`;
+  if(q.live==="couleur") body+=`<div id="wlive" style="margin-top:12px">${liveCouleur(a)}</div>`;
+  if(q.type==="summary"){
+    const r=wizAnalyse(a);
+    body=`<div class="card" style="display:flex;gap:14px;align-items:center"><div class="big-num">${r.score}<span class="small muted">/100</span></div>
+      <div class="grow"><span class="badge ${r.temp==="chaud"?"":r.temp==="tiède"?"warn":"grey"}" style="font-size:13px">${r.temp==="chaud"?"🔥 chaud":r.temp==="tiède"?"tiède":"froid"}</span>
+      <div class="small muted" style="margin-top:4px">Produit conseillé : <b>${esc(r.produit)}</b>${r.couleur?` · profil <b>${r.couleur}</b>`:""}${r.aide?` · MPR estimée ${eur(r.aide)}`:""}</div></div></div>
+      ${r.bloq.map(t=>`<div class="alert danger" style="margin-top:8px;cursor:default"><span class="ic">!</span><div>${esc(t)}</div></div>`).join("")}
+      ${r.warn.map(t=>`<div class="alert" style="margin-top:8px;cursor:default"><span class="ic">•</span><div>${esc(t)}</div></div>`).join("")}
+      <div class="grid" style="margin-top:14px">
+        <button class="btn primary block" data-act="wfinish" data-etape="2">${S.wiz.dossierId?"Enregistrer la qualification":"Créer le dossier"} → Qualifié</button>
+        ${r.bloq.length?`<button class="btn block" data-act="wfinish" data-etape="0">Classer en perdu / infaisable</button>`:""}
+        <button class="btn block" data-act="wfinish" data-etape="1">Enregistrer sans qualifier (à rappeler)</button>
+      </div>`;
+  }
+  const html=`<div class="row" style="margin-bottom:6px"><span class="small muted grow">${S.wiz.dossierId?"Qualification":"Nouveau lead"} · ${i+1}/${vis.length}</span><button class="btn" data-act="wclose" style="padding:4px 10px">Fermer</button></div>
+    <div class="stepper" style="margin-bottom:14px">${vis.map((_,k)=>`<i class="${k<=i?"on":""}"></i>`).join("")}</div>
+    <h2 style="margin:0 0 6px;font-size:20px;text-wrap:balance">${esc(q.t)}</h2>${q.hint?`<p class="small muted" style="margin:0 0 12px">${esc(q.hint)}</p>`:'<div style="height:8px"></div>'}
+    ${body}<div class="small neg" id="werr" style="margin-top:8px"></div>
+    ${q.type!=="summary"?`<div class="row" style="margin-top:16px;gap:8px">${i>0?`<button class="btn" data-act="wprev">← Retour</button>`:""}<span class="grow"></span>${q.type!=="choice"||a[q.id]?`<button class="btn primary" data-act="wnext">Suivant →</button>`:`<button class="btn" data-act="wnext">Passer</button>`}</div>`:`<div style="margin-top:10px"><button class="btn" data-act="wprev">← Retour</button></div>`}`;
+  let m=$("#modal");
+  if(!m){ m=document.createElement("div"); m.className="modal"; m.id="modal"; m.innerHTML='<div class="sheet"></div>'; document.body.appendChild(m); }
+  m.querySelector(".sheet").innerHTML=html; m.querySelector(".sheet").scrollTop=0;
+  const f=m.querySelector(".wf"); if(f && !("ontouchstart" in window)) f.focus();
+}
+function liveCouleur(a){ const c=couleurCalc(a.rfr,a.nbPersonnes,a.cp); if(!c) return '<span class="small muted">La couleur MPR s\'affiche dès que le RFR et le nombre de personnes sont saisis.</span>';
+  return `<div class="row"><span class="pastille c-${c}" style="width:22px;height:22px"></span><b style="text-transform:capitalize">${c}</b><span class="small muted">${isIDF(a.cp)?"Île-de-France":"hors IDF"}${c!=="rose"?" · MPR PAC ≈ "+eur(AIDE_MPR_PAC[c]):" · CEE seul"}</span></div>`; }
+function wizCollect(){ document.querySelectorAll("#modal .wf").forEach(el=>{ S.wiz.a[el.dataset.k]=el.value.trim(); }); }
+async function wizFinish(etape){
+  const a=S.wiz.a; const r=wizAnalyse(a);
+  let d = S.wiz.dossierId ? S.dossiers.get(S.wiz.dossierId) : null;
+  if(!d){
+    const telN=String(a.tel||"").replace(/\D/g,"");
+    if(telN){ const dup=actifs().find(x=>String(x.tel||"").replace(/\D/g,"").endsWith(telN.slice(-9))); if(dup && !(await confirmBox("Ce numéro existe déjà ("+fullName(dup)+"). Créer quand même ?"))){ renderWizard(); return; } }
+    d=newDossier();
+  }
+  const set=(k,v)=>{ if(v!==undefined && v!==null && v!=="") d[k]=v; };
+  for(const k of ["source","nom","prenom","tel","email","adresse","cp","ville","habitat","proprietaire","chauffage","surface","nbPersonnes","rfr"]) set(k,a[k]);
+  if(a.compteur && a.compteur!=="Ne sait pas") d.compteur=a.compteur;
+  if(a.emetteursType) d.emetteurs = hasRad(a) ? `${a.nbRad?a.nbRad+" ":""}radiateurs à eau${a.typeRad&&a.typeRad!=="Ne sait pas"?" "+a.typeRad.toLowerCase():""}${/plancher/i.test(a.emetteursType)?" + plancher":""}` : a.emetteursType;
+  if(!S.wiz.dossierId || !d.produit || d.produit==="PAC air/eau") d.produit=r.produit;
+  d.qualif=Object.assign({},a,{score:r.score,temp:r.temp,bloquants:r.bloq,points:r.warn,date:Date.now()});
+  d.scoreLead=r.score; d.temperature=r.temp;
+  if(r.aide && !d.valoMPR) d.valoMPR=String(r.aide);
+  const lignes=[["Logement",a.habitat],["Statut",a.proprietaire],["> 15 ans",a.plus15],["Chauffage",a.chauffage],["Âge chaudière",a.ageChaudiere],["Chaudière dans",a.emplacement],
+    ["Émetteurs",d.emetteurs],["Eau chaude",a.ecs],["Surface",a.surface&&a.surface+" m²"+(a.niveaux?" · "+a.niveaux+" niveau(x)":"")],["Compteur",a.compteur],["Aide 1 € déjà reçue",a.deja],["Délai",a.delai],["Prévisite",a.previsite]]
+    .filter(x=>x[1]).map(x=>x[0]+" : "+x[1]).join(" · ");
+  d.notes=((d.notes?d.notes+"\n":"")+`[Qualif ${new Date().toLocaleDateString("fr-FR")}] ${r.score}/100 (${r.temp}) — ${lignes}${r.bloq.length?" — BLOQUANT : "+r.bloq.join(" ; "):""}`).trim();
+  if(Number(etape)!==Number(d.etape)) setEtape(d,etape);
+  await saveDossier(d); closeModal(); S.wiz=null;
+  S.prevView = S.view==="dossier" ? (S.prevView||"pipeline") : S.view;
+  S.view="dossier"; S.param=d.id; S.tab="client";
+  history.pushState({v:"dossier"},""); window.scrollTo(0,0); render();
+  toast(Number(etape)===0?"Classé perdu":"Dossier "+(r.temp==="chaud"?"🔥 chaud":r.temp)+" · "+r.score+"/100");
+}
+document.addEventListener("click", async e=>{
+  const b=e.target.closest("#modal [data-act^=w]"); if(!b || !S.wiz) return;
+  e.stopImmediatePropagation(); e.preventDefault();
+  const act=b.dataset.act; const vis=wizVisible(); const q=vis[S.wiz.i];
+  if(act==="wclose"){ closeModal(); S.wiz=null; return; }
+  if(act==="wchoose"){ S.wiz.a[q.id]=b.dataset.v; S.wiz.i++; renderWizard(); return; }
+  if(act==="wprev"){ wizCollect(); S.wiz.i=Math.max(0,S.wiz.i-1); renderWizard(); return; }
+  if(act==="wnext"){ wizCollect(); const err=q.valid&&q.valid(S.wiz.a); if(err){ $("#werr").textContent=err; return; } S.wiz.i++; renderWizard(); return; }
+  if(act==="wfinish"){ wizCollect(); await wizFinish(Number(b.dataset.etape)); return; }
+}, true);
+document.addEventListener("input", e=>{ if(e.target.classList && e.target.classList.contains("wf") && S.wiz){ S.wiz.a[e.target.dataset.k]=e.target.value.trim(); const l=$("#wlive"); if(l) l.innerHTML=liveCouleur(S.wiz.a); } });
+document.addEventListener("keydown", e=>{ if(e.key==="Enter" && S.wiz && e.target.classList && e.target.classList.contains("wf")){ e.preventDefault(); const n=$('#modal [data-act="wnext"]'); if(n) n.click(); } });
+function qualifCard(d){
+  const q=d.qualif; if(!q) return Number(d.etape)<=2?`<div class="card row" style="margin-bottom:12px"><div class="grow small">Ce lead n'est pas encore qualifié.</div><button class="btn primary" data-act="qualifier">Qualifier</button></div>`:"";
+  return `<div class="card" style="margin-bottom:12px"><div class="row"><div class="big-num" style="font-size:22px">${q.score}<span class="small muted">/100</span></div>
+    <span class="badge ${q.temp==="chaud"?"":q.temp==="tiède"?"warn":"grey"}">${q.temp==="chaud"?"🔥 chaud":esc(q.temp)}</span><span class="grow"></span><button class="btn" data-act="qualifier" style="padding:6px 10px">Requalifier</button></div>
+    ${(q.bloquants||[]).map(t=>`<div class="small neg" style="margin-top:6px">⚠ ${esc(t)}</div>`).join("")}${(q.points||[]).map(t=>`<div class="small muted" style="margin-top:4px">• ${esc(t)}</div>`).join("")}</div>`;
 }
 
 /* ---------- Démarrage ---------- */
