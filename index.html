@@ -182,7 +182,8 @@ const ETAPES = [
 const etapeLabel = n => (ETAPES.find(e=>e.n===Number(n))||{l:"?"}).l;
 const SOURCES = ["Site internet","Call Maroc","Hello Artisan","Effy","Igor","Parrainage","Apporteur","Direct","Autre"];
 const PRODUITS = ["PAC air/eau","PAC + ballon thermo","PAC + ballon élec","Ballon thermodynamique","SSC","ITE","Photovoltaïque","Autre"];
-const FOURNISSEURS = ["Axdis","Brother Négoce","LM Plastic","Elle M","Fourni-posé","Autre"];
+const FOURNISSEURS = ["Axdis","Brother Négoce","LM Plastic","Fourni-posé","Autre"];
+function LIST(k){ const s=SET(); if(k==="fournisseurs") return [...new Set([...(s.fournisseurs||[]).map(f=>f.nom).filter(Boolean),"Fourni-posé","Autre"])]; return (s[k]&&s[k].length)?s[k]:({sources:SOURCES,produits:PRODUITS})[k]||[]; }
 const STATUT_OPX = ["À déposer","Déposé","Validé","Paiement demandé","Payé","Refusé"];
 const STATUT_MPR = ["À déposer","Attente code","Déposé","Octroyé","Paiement demandé","Payé","Non concerné"];
 const CHAUFFAGES = ["Chaudière gaz","Chaudière fioul","Électrique","Bois","PAC existante","Autre"];
@@ -279,6 +280,7 @@ async function loadAll(){
   for(const d of await DB.all("dossiers")) S.dossiers.set(d.id,d);
   S.outbox=(await DB.all("outbox")).length;
   for(const b of await DB.all("blobs")) if(b.thumb) S.thumbs.set(b.id,b.thumb);
+  for(const d of S.dossiers.values()) if(/^elle\s*m$/i.test(String(d.fournisseur||"").trim())){ d.fournisseur="LM Plastic"; await saveDossier(d,{silent:true}); }
 }
 function newDossier(extra){
   const now=Date.now();
@@ -533,6 +535,7 @@ function viewDash(){
   const aEnc=live.filter(d=>Number(d.etape)>=7).reduce((s,d)=>s+resteAEncaisser(d),0);
   const alerts=[]; for(const d of live) for(const a of alertsFor(d)) alerts.push({d,a});
   alerts.sort((x,y)=>(x.a.lvl==="danger"?0:1)-(y.a.lvl==="danger"?0:1));
+  const sansMail=(SET().fournisseurs||[]).filter(f=>f.nom && !f.email).map(f=>f.nom);
   return `
   <div class="grid kpis">
     <div class="card kpi" data-nav="pipeline" data-filter="leads"><div class="v">${leads}</div><div class="l">Leads à traiter</div></div>
@@ -540,8 +543,8 @@ function viewDash(){
     <div class="card kpi" data-nav="planning"><div class="v">${in7}</div><div class="l">Poses sous 7 jours</div></div>
     <div class="card kpi" data-nav="finances"><div class="v money">${eur(aEnc)}</div><div class="l">Reste à encaisser</div></div>
   </div>
-  <h2>À faire <span class="muted small">(${alerts.length})</span></h2>
-  <div class="list">${alerts.length?alerts.slice(0,40).map(({d,a})=>`
+  <h2>À faire <span class="muted small">(${alerts.length+(sansMail.length?1:0)})</span></h2>
+  <div class="list">${sansMail.length?`<div class="alert" data-nav="reglages"><span class="ic">✎</span><div class="grow"><b>Rappel</b> — renseigner l'e-mail de commande de ${esc(sansMail.join(", "))}<div class="small muted">Réglages → Fournisseurs</div></div></div>`:""}${alerts.length?alerts.slice(0,40).map(({d,a})=>`
     <div class="alert ${a.lvl==="danger"?"danger":""}" data-open="${esc(d.id)}"><span class="ic">${a.lvl==="danger"?"!":"•"}</span><div class="grow"><b>${esc(fullName(d))}</b> — ${esc(a.t)}<div class="small muted">${esc(etapeLabel(d.etape))}${d.ville?" · "+esc(d.ville):""}</div></div></div>`).join(""):'<div class="card empty">Rien d\'urgent. 👌</div>'}
   </div>
   <h2>Derniers leads</h2>
@@ -587,6 +590,7 @@ function viewPipeline(){
 }
 
 /* ----- Fiche dossier (gérant) ----- */
+function withCur(list,cur){ return cur && !list.includes(cur) ? [...list,cur] : list; }
 function F(d,key,label,type,opts){ // champ de formulaire lié
   opts=opts||{}; const v=d[key]==null?"":d[key]; const cls=opts.full?"f full":"f";
   if(type==="select") return `<label class="${cls}"><span>${label}</span><select data-field="${key}">${(opts.allowEmpty?['<option value=""></option>']:[]).concat(opts.options.map(o=>{const val=Array.isArray(o)?o[0]:o, lab=Array.isArray(o)?o[1]:o; return `<option value="${esc(val)}" ${String(v)===String(val)?"selected":""}>${esc(lab)}</option>`;})).join("")}</select></label>`;
@@ -603,7 +607,7 @@ function viewDossier(d){
   if(S.tab==="client") body=qualifCard(d)+`
     <div class="form three">
       ${F(d,"nom","Nom","text")}${F(d,"prenom","Prénom","text")}${F(d,"tel","Téléphone","tel")}
-      ${F(d,"email","E-mail","email")}${F(d,"source","Source","select",{options:SOURCES})}${F(d,"produit","Produit","select",{options:PRODUITS})}
+      ${F(d,"email","E-mail","email")}${F(d,"source","Source","select",{options:withCur(LIST("sources"),d.source)})}${F(d,"produit","Produit","select",{options:withCur(LIST("produits"),d.produit)})}
       ${F(d,"adresse","Adresse","text",{full:true})}
       ${F(d,"cp","Code postal","text")}${F(d,"ville","Ville","text")}
       ${F(d,"habitat","Logement","select",{options:["Maison individuelle","Appartement","Autre"]})}
@@ -640,7 +644,7 @@ function viewDossier(d){
     <p class="small muted" style="margin-top:12px">Les identifiants des comptes MPR clients ne sont pas stockés ici. Garde-les dans un gestionnaire de mots de passe.</p>`;
   if(S.tab==="chantier") body=`
     <div class="form">
-      ${F(d,"fournisseur","Fournisseur","select",{options:FOURNISSEURS,allowEmpty:true})}${F(d,"prixMateriel","Prix matériel (€)","number")}
+      ${F(d,"fournisseur","Fournisseur","select",{options:withCur(LIST("fournisseurs"),d.fournisseur),allowEmpty:true})}${F(d,"prixMateriel","Prix matériel (€)","number")}
       ${F(d,"materiel","Matériel","text",{full:true,ph:"ex : PAC 11 kW Mono + ballon 200 L"})}
       ${F(d,"dateCommande","Date commande","date")}${F(d,"dateLivraison","Livraison prévue","date")}
       ${F(d,"poseur","Poseur","select",{options:poseursList(),allowEmpty:true})}${F(d,"prixPoseur","Prix poseur (€)","number")}
@@ -928,7 +932,7 @@ const isGazFioul = a => /gaz|fioul|bois/i.test(a.chauffage||"");
 const isElec = a => /lectrique/i.test(a.chauffage||"");
 const hasRad = a => /radiateur/i.test(a.emetteursType||"");
 const WQ = [
-  {id:"source", t:"D'où vient ce client ?", type:"choice", opts:SOURCES},
+  {id:"source", t:"D'où vient ce client ?", type:"choice", opts:()=>LIST("sources")},
   {id:"contact", t:"Coordonnées du client", type:"fields", fields:[["nom","Nom","text"],["prenom","Prénom","text"],["tel","Téléphone","tel"],["email","E-mail","email"],["adresse","Adresse","text",true],["cp","Code postal","cp"],["ville","Ville","text"]],
     valid:a=>(a.nom||a.tel)?"":"Mets au moins le nom ou le téléphone."},
   {id:"habitat", t:"Quel type de logement ?", type:"choice", opts:["Maison individuelle","Appartement"]},
@@ -988,7 +992,7 @@ function openWizard(d){
 function renderWizard(){
   const vis=wizVisible(); const i=Math.min(S.wiz.i,vis.length-1); S.wiz.i=i; const q=vis[i]; const a=S.wiz.a;
   let body="";
-  if(q.type==="choice") body=`<div class="grid" style="grid-template-columns:1fr">${q.opts.map(o=>`<button class="btn wopt ${a[q.id]===o?"primary":""}" data-act="wchoose" data-v="${esc(o)}" style="justify-content:flex-start;padding:13px 14px">${esc(o)}</button>`).join("")}</div>`;
+  if(q.type==="choice") body=`<div class="grid" style="grid-template-columns:1fr">${(typeof q.opts==="function"?q.opts():q.opts).map(o=>`<button class="btn wopt ${a[q.id]===o?"primary":""}" data-act="wchoose" data-v="${esc(o)}" style="justify-content:flex-start;padding:13px 14px">${esc(o)}</button>`).join("")}</div>`;
   if(q.type==="number") body=`<div class="row"><input type="text" inputmode="numeric" class="wf" data-k="${q.id}" value="${esc(a[q.id]||"")}" style="font-size:20px"><span class="muted">${esc(q.unit||"")}</span></div>`;
   if(q.type==="fields") body=`<div class="form">${q.fields.map(([k,l,t,full])=>`<label class="f ${full?"full":""}"><span>${l}</span><input type="${t==="num"||t==="cp"?"text":t}" ${t==="num"||t==="cp"?'inputmode="numeric"':""} class="wf" data-k="${k}" value="${esc(a[k]||"")}"></label>`).join("")}</div>`;
   if(q.live==="couleur") body+=`<div id="wlive" style="margin-top:12px">${liveCouleur(a)}</div>`;
@@ -1075,7 +1079,9 @@ function qualifCard(d){
 const DEFAULT_SET = {
   poseurs:[{nom:"Igor",capacite:2},{nom:"Kevin",capacite:1}],
   coutsLead:{"Call Maroc":0,"Hello Artisan":50,"Effy":119,"Site internet":0,"Igor":0,"Parrainage":0,"Apporteur":0,"Direct":0,"Autre":0},
-  fournisseurs:[{nom:"Axdis",email:"",tel:""},{nom:"Brother Négoce",email:"",tel:""},{nom:"LM Plastic",email:"",tel:""},{nom:"Elle M",email:"",tel:""}],
+  fournisseurs:[{nom:"Axdis",email:"",tel:""},{nom:"Brother Négoce",email:"",tel:""},{nom:"LM Plastic",email:"",tel:""}],
+  sources:["Site internet","Call Maroc","Hello Artisan","Effy","Igor","Parrainage","Apporteur","Direct","Autre"],
+  produits:["PAC air/eau","PAC + ballon thermo","PAC + ballon élec","Ballon thermodynamique","SSC","ITE","Photovoltaïque","Autre"],
   societe:{nom:"Eco Roy",tel:"09 72 14 91 62",mobile:"06 14 72 40 41",email:"contact@roy-consulting.com",site:"www.eco-roy.com",avisGoogle:""},
   modeles:[
     {id:"m1",nom:"Premier contact",txt:"Bonjour {prenom}, c'est {societe}. Suite à votre demande pour une pompe à chaleur, je vous appelle pour vérifier votre éligibilité aux aides. Quand êtes-vous disponible ?"},
@@ -1382,13 +1388,19 @@ function viewReglagesPlus(){
   const s=SET();
   return `<h2>Poseurs et capacité</h2><div class="card grid">${s.poseurs.map((p,i)=>`<div class="row" style="gap:8px"><input type="text" class="rs" data-rs="poseurs.${i}.nom" value="${esc(p.nom)}" class="grow"><label class="small muted row" style="gap:6px;white-space:nowrap">équipes <input type="text" inputmode="numeric" class="rs" data-rs="poseurs.${i}.capacite" value="${esc(p.capacite)}" style="width:60px"></label><button class="btn" data-mact="rmposeur" data-i="${i}">✕</button></div>`).join("")}
     <button class="btn" data-mact="addposeur">+ Ajouter un poseur</button><div class="small muted">Les codes PIN se règlent dans l'onglet « Config » de ta Google Sheet.</div></div>
-  <h2>Coût d'un lead par source</h2><div class="card form">${Object.keys(s.coutsLead).map(k=>`<label class="f"><span>${esc(k)} (€)</span><input type="text" inputmode="decimal" class="rs" data-rs="coutsLead.${esc(k)}" value="${esc(s.coutsLead[k])}"></label>`).join("")}</div>
-  <h2>Fournisseurs</h2><div class="card grid">${s.fournisseurs.map((f,i)=>`<div class="form"><label class="f"><span>Nom</span><input type="text" class="rs" data-rs="fournisseurs.${i}.nom" value="${esc(f.nom)}"></label><label class="f"><span>E-mail commandes</span><input type="email" class="rs" data-rs="fournisseurs.${i}.email" value="${esc(f.email)}"></label></div>`).join("")}</div>
+  <h2>Sources de leads</h2><div class="card">${listEditor("sources",s.sources)}</div>
+  <h2>Produits / types de travaux</h2><div class="card">${listEditor("produits",s.produits)}</div>
+  <h2>Coût d'un lead par source</h2><div class="card form">${s.sources.map(k=>[k,s.coutsLead[k]==null?0:s.coutsLead[k]]).map(([k])=>`<label class="f"><span>${esc(k)} (€)</span><input type="text" inputmode="decimal" class="rs" data-rs="coutsLead.${esc(k)}" value="${esc(s.coutsLead[k]==null?0:s.coutsLead[k])}"></label>`).join("")}</div>
+  <h2>Fournisseurs</h2><div class="card grid">${s.fournisseurs.map((f,i)=>`<div class="form"><label class="f"><span>Nom</span><input type="text" class="rs" data-rs="fournisseurs.${i}.nom" value="${esc(f.nom)}"></label><label class="f"><span>E-mail commandes</span><input type="email" class="rs" data-rs="fournisseurs.${i}.email" value="${esc(f.email)}"></label>
+    <label class="f"><span>Téléphone</span><input type="tel" class="rs" data-rs="fournisseurs.${i}.tel" value="${esc(f.tel||"")}"></label><div class="f" style="justify-content:flex-end"><button class="btn danger" data-mact="rmfour" data-i="${i}">Supprimer</button></div></div>`).join('<div class="hr" style="margin:4px 0"></div>')}
+    <button class="btn" data-mact="addfour">+ Ajouter un fournisseur</button></div>
   <h2>Société (messages et documents)</h2><div class="card form">${[["nom","Nom commercial"],["tel","Téléphone"],["mobile","Mobile"],["email","E-mail"],["site","Site web"],["avisGoogle","Lien avis Google"]].map(([k,l])=>`<label class="f ${k==="avisGoogle"?"full":""}"><span>${l}</span><input type="text" class="rs" data-rs="societe.${k}" value="${esc(s.societe[k]||"")}"></label>`).join("")}</div>
   <h2>Modèles de messages</h2><div class="small muted" style="margin:-4px 0 8px">Variables : {prenom} {nom} {date_pose} {poseur} {pieces} {societe} {tel_societe} {avis_google}</div>
   <div class="grid">${s.modeles.map((m,i)=>`<div class="card grid"><input type="text" class="rs" data-rs="modeles.${i}.nom" value="${esc(m.nom)}" style="font-weight:600"><textarea class="rs" data-rs="modeles.${i}.txt">${esc(m.txt)}</textarea><button class="btn" data-mact="rmmodele" data-i="${i}">Supprimer ce modèle</button></div>`).join("")}<button class="btn" data-mact="addmodele">+ Nouveau modèle</button></div>
   <button class="btn primary block" style="margin-top:14px" data-mact="savesettings">Enregistrer les réglages</button>`;
 }
+function listEditor(k,arr){ return `<div class="row wrap" style="gap:6px;margin-bottom:8px">${(arr||[]).map((x,i)=>`<span class="chip" style="cursor:default">${esc(x)} <button data-mact="rmitem" data-k="${k}" data-i="${i}" aria-label="Supprimer ${esc(x)}" style="border:0;background:none;cursor:pointer;color:var(--danger);font-weight:700;padding:0 0 0 4px">✕</button></span>`).join("")}</div>
+  <div class="row" style="gap:8px"><input type="text" id="add_${k}" placeholder="Ajouter…" class="grow"><button class="btn" data-mact="additem" data-k="${k}">Ajouter</button></div>`; }
 function setPath(obj,path,val){ const ks=path.split("."); let o=obj; for(let i=0;i<ks.length-1;i++){ const k=ks[i]; if(o[k]==null) o[k]=/^\d+$/.test(ks[i+1])?[]:{}; o=o[k]; } o[ks[ks.length-1]]=val; }
 function editableSettings(){ if(!CFG.settings) CFG.settings=JSON.parse(JSON.stringify(SET())); for(const k of Object.keys(DEFAULT_SET)) if(CFG.settings[k]==null) CFG.settings[k]=JSON.parse(JSON.stringify(DEFAULT_SET[k])); return CFG.settings; }
 
@@ -1422,6 +1434,10 @@ document.addEventListener("click", async e=>{
       const url = c==="sms" ? `sms:${tel}${/iPhone|iPad|Mac/.test(navigator.userAgent)?"&":"?"}body=${encodeURIComponent(txt)}` : c==="whatsapp" ? `https://wa.me/${telIntl(d.tel)}?text=${encodeURIComponent(txt)}` : c==="mail" ? `mailto:${encodeURIComponent(d.email)}?subject=${encodeURIComponent(SET().societe.nom+" — votre projet")}&body=${encodeURIComponent(txt)}` : `tel:${tel}`;
       await logComm(d,c,c==="appel"?"":m,c==="appel"?"":txt); closeModal();
       if(c==="whatsapp") window.open(url,"_blank"); else location.href=url; break; }
+    case "addfour": editableSettings().fournisseurs.push({nom:"",email:"",tel:""}); render(); break;
+    case "rmfour": { const f=editableSettings().fournisseurs[Number(b.dataset.i)]; if(await confirmBox("Supprimer le fournisseur "+(f.nom||"")+" ? (les dossiers existants le gardent)")){ editableSettings().fournisseurs.splice(Number(b.dataset.i),1); await pushSettings(); render(); } break; }
+    case "additem": { const k=b.dataset.k; const inp=$("#add_"+k); const v=(inp&&inp.value||"").trim(); if(!v) break; const s=editableSettings(); if(!s[k].includes(v)) s[k].push(v); await pushSettings(); render(); break; }
+    case "rmitem": { const k=b.dataset.k; const s=editableSettings(); const v=s[k][Number(b.dataset.i)]; if(await confirmBox(`Retirer « ${v} » de la liste ? (les dossiers existants le gardent)`)){ s[k].splice(Number(b.dataset.i),1); await pushSettings(); render(); } break; }
     case "addposeur": editableSettings().poseurs.push({nom:"Nouveau",capacite:1}); render(); break;
     case "rmposeur": editableSettings().poseurs.splice(Number(b.dataset.i),1); render(); break;
     case "addmodele": editableSettings().modeles.push({id:"m"+Date.now(),nom:"Nouveau modèle",txt:"Bonjour {prenom}, "}); render(); break;
