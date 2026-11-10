@@ -508,7 +508,7 @@ function render(){
   else if(v==="pipeline") h=dossToggle()+(S.dossView==="kanban"?viewKanban():viewPipeline());
   else if(v==="carte") h=viewCarte();
   else if(v==="dossier") h=viewDossier(S.dossiers.get(S.param));
-  else if(v==="planning") h=viewPlanningVisuel();
+  else if(v==="planning") h=`<div class="dtabs" style="margin-top:0"><button data-mact="pltab" data-v="taches" class="${(S.pltab||"taches")==="taches"?"on":""}">Tâches à faire</button><button data-mact="pltab" data-v="poses" class="${S.pltab==="poses"?"on":""}">Poses de la semaine</button></div>`+((S.pltab||"taches")==="taches"?viewAgenda():viewPlanningVisuel());
   else if(v==="finances") h=viewGestion();
   else if(v==="reglages") h=viewReglages()+viewReglagesPlus();
   const y=window.scrollY; const keepScroll = S._keepScroll; S._keepScroll=false;
@@ -525,7 +525,7 @@ function safeRender(){
 }
 document.addEventListener("focusout",()=>setTimeout(()=>{ if(S.needRender && !sigDirty){ const a=document.activeElement; if(!a || !/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)){ S.needRender=false; captureDraft(); S._keepScroll=true; render(); } } },300));
 function header(){
-  const title = isPoseur() ? "Mes chantiers" : ({dash:"Tableau de bord",pipeline:"Dossiers",dossier:"Dossier",carte:"Carte",planning:"Planning des poses",finances:"Gestion",reglages:"Réglages"})[S.view]||"CRM";
+  const title = isPoseur() ? "Mes chantiers" : ({dash:"Tableau de bord",pipeline:"Dossiers",dossier:"Dossier",carte:"Carte",planning:"Planning",finances:"Gestion",reglages:"Réglages"})[S.view]||"CRM";
   const sub = isPoseur() ? esc(CFG.poseur) : (CFG.role==="demo"?"Mode démo (données locales)":"Eco-Roy");
   const back = S.view==="dossier" ? `<button class="back" data-act="back" aria-label="Retour">←</button>` : "";
   return `<header class="top">${back}<h1>${title}<small>${sub}</small></h1><div class="sync" id="sync" data-act="sync"></div></header>`;
@@ -605,25 +605,31 @@ function demoData(){
 function actifs(){ return [...S.dossiers.values()].filter(d=>!d._deleted); }
 function viewDash(){
   const all=actifs(); const live=all.filter(d=>Number(d.etape)!==0);
-  const leads=live.filter(d=>E.lead(Number(d.etape))).length;
+  const aTrier=all.filter(d=>d.aVerifier).length;
+  const leads=live.filter(d=>E.lead(Number(d.etape)) && !d.aVerifier).length;
   const enCours=live.filter(d=>Number(d.etape)>=4&&Number(d.etape)<=7).length;
   const in7=live.filter(d=>d.datePose && E.planif(Number(d.etape)) && -daysSince(d.datePose)>=0 && -daysSince(d.datePose)<=7).length;
-  const aEnc=live.filter(d=>E.installe(Number(d.etape))).reduce((s,d)=>s+resteAEncaisser(d),0);
+  const demande=live.filter(d=>[9,10].includes(Number(d.etape))).reduce((s,d)=>s+resteAEncaisser(d),0);
+  const aFacturer=live.filter(d=>Number(d.etape)===8).reduce((s,d)=>s+resteAEncaisser(d),0);
+  const aEnc=demande+aFacturer;
+  const taches=tachesAgenda(); const tDues=taches.filter(t=>t.date && t.date<=today()).length;
   const alerts=[]; for(const d of live) for(const a of alertsFor(d)) alerts.push({d,a});
   alerts.sort((x,y)=>(x.a.lvl==="danger"?0:1)-(y.a.lvl==="danger"?0:1));
   const sansMail=(SET().fournisseurs||[]).filter(f=>f.nom && !f.email).map(f=>f.nom);
   return `
   <div class="grid kpis">
-    <div class="card kpi" data-nav="pipeline" data-filter="leads"><div class="v">${leads}</div><div class="l">Leads à traiter</div></div>
-    <div class="card kpi" data-nav="pipeline" data-filter="encours"><div class="v">${enCours}</div><div class="l">Dossiers en cours</div></div>
+    <div class="card kpi" data-nav="pipeline" data-filter="trier"><div class="v">${aTrier}</div><div class="l">Fiches à trier</div></div>
+    <div class="card kpi" data-nav="pipeline" data-filter="leads"><div class="v">${leads}</div><div class="l">Leads à rappeler</div></div>
+    <div class="card kpi" data-nav="pipeline" data-filter="encours"><div class="v">${enCours}</div><div class="l">En cours · priorités</div></div>
+    <div class="card kpi" data-nav="planning"><div class="v">${tDues}</div><div class="l">Tâches du jour / en retard</div></div>
     <div class="card kpi" data-nav="planning"><div class="v">${in7}</div><div class="l">Poses sous 7 jours</div></div>
-    <div class="card kpi" data-nav="finances"><div class="v money">${eur(aEnc)}</div><div class="l">Reste à encaisser</div></div>
+    <div class="card kpi" data-nav="pipeline" data-filter="encaisser"><div class="v money">${eur(aEnc)}</div><div class="l">Reste à encaisser<br><span class="small">${eur(demande)} demandés · ${eur(aFacturer)} à facturer</span></div></div>
   </div>
   <h2>À faire <span class="muted small">(${alerts.length+(sansMail.length?1:0)})</span></h2>
   <div class="list">${sansMail.length?`<div class="alert" data-nav="reglages"><span class="ic">✎</span><div class="grow"><b>Rappel</b> — renseigner l'e-mail de commande de ${esc(sansMail.join(", "))}<div class="small muted">Réglages → Fournisseurs</div></div></div>`:""}${alerts.length?alerts.slice(0,40).map(({d,a})=>`
     <div class="alert ${a.lvl==="danger"?"danger":""}" data-open="${esc(d.id)}"><span class="ic">${a.lvl==="danger"?"!":"•"}</span><div class="grow"><b>${esc(fullName(d))}</b> — ${esc(a.t)}<div class="small muted">${esc(etapeLabel(d.etape))}${d.ville?" · "+esc(d.ville):""}</div></div></div>`).join(""):'<div class="card empty">Rien d\'urgent. 👌</div>'}
   </div>
-  ${all.filter(d=>d.aVerifier).length?`<div class="card row" style="margin-top:10px"><div class="grow small"><b>${all.filter(d=>d.aVerifier).length} dossiers importés à vérifier</b> — ils n'apparaissent dans « À faire » que pour les soldes en retard.</div><button class="btn" data-nav="pipeline" data-filter="verifier">Voir</button></div>`:""}
+  ${all.filter(d=>d.aVerifier).length?`<div class="card row" style="margin-top:10px"><div class="grow small"><b>${aTrier} fiches à trier</b> (Effy, Hello Artisan, anciens Sheets) — décide pour chacune : à rappeler, suivi long terme ou perdu.</div><button class="btn" data-nav="pipeline" data-filter="trier">Trier</button></div>`:""}
   <h2>Derniers leads</h2>
   <div class="list">${all.filter(d=>Number(d.etape)===1).sort((a,b)=>b.createdAt-a.createdAt).slice(0,8).map(itemRow).join("")||'<div class="card empty">Aucun nouveau lead.</div>'}</div>
   <button class="fab" data-act="new" aria-label="Nouveau dossier">+</button>`;
@@ -631,23 +637,17 @@ function viewDash(){
 
 /* ----- Liste / pipeline ----- */
 const FILTRES = [
-  ["actifs","Tous actifs",d=>E.actif(Number(d.etape))],
-  ["leads","Leads",d=>E.lead(Number(d.etape))],
-  ["encours","Devis & dossiers",d=>E.montage(Number(d.etape))],
-  ["poses","Poses",d=>Number(d.etape)===7],
-  ["installes","Installés",d=>E.enCours(Number(d.etape))],
+  ["tous","Tous",()=>true],
+  ["trier","À trier",d=>!!d.aVerifier],
+  ["leads","Leads à rappeler",d=>E.lead(Number(d.etape)) && !d.aVerifier],
+  ["encours","En cours (devis → pose)",d=>Number(d.etape)>=4&&Number(d.etape)<=7],
+  ["encaisser","Posés · à encaisser",d=>E.enCours(Number(d.etape))],
   ["soldes","Soldés",d=>Number(d.etape)===11],
   ["suivi","Suivi long terme",d=>Number(d.etape)===12],
   ["perdus","Perdus",d=>Number(d.etape)===0],
-  ["verifier","À vérifier",d=>!!d.aVerifier],
-  ["src-effy","Effy",d=>/effy/i.test(d.source||"")],
-  ["src-ha","Hello Artisan",d=>/hello/i.test(d.source||"")],
-  ["src-call","Call Maroc",d=>/call|maroc|mabrour/i.test(d.source||"")],
-  ["src-igor","Igor",d=>/igor/i.test(d.source||"")],
-  ["devis","Avec devis",d=>(d.devis||[]).length>0],
-  ["site","Tunnel site complet",d=>!!d.dossierSiteComplet],
-  ["tous","Tous",()=>true],
 ];
+const FILTRE_ALIAS={verifier:"trier",actifs:"tous",installes:"encaisser",poses:"encours"};
+const srcKey = d => { const x=String(d.source||"").toLowerCase(); if(/effy/.test(x)) return "Effy"; if(/hello/.test(x)) return "Hello Artisan"; if(/call|maroc|mabrour/.test(x)) return "Call Maroc"; if(/igor/.test(x)) return "Igor"; return d.source||"Sans source"; };
 function itemRow(d){
   const c=couleurOf(d); const al=alertsFor(d);
   return `<div class="card item" data-open="${esc(d.id)}">
@@ -662,13 +662,18 @@ function itemRow(d){
 function dossToggle(){ return `<div class="seg" style="margin-bottom:10px;max-width:320px"><button data-mact="dossview" data-v="liste" class="${S.dossView!=="kanban"?"on":""}">Liste</button><button data-mact="dossview" data-v="kanban" class="${S.dossView==="kanban"?"on":""}">Kanban</button></div>`; }
 function viewPipeline(){
   const all=actifs(); const q=S.q.trim().toLowerCase();
+  if(FILTRE_ALIAS[S.filter]) S.filter=FILTRE_ALIAS[S.filter];
   const f=FILTRES.find(x=>x[0]===S.filter)||FILTRES[0];
-  let list=all.filter(f[2]);
+  const srcs=[...new Set(all.map(srcKey))].sort();
+  const base=S.src?all.filter(d=>srcKey(d)===S.src):all;
+  let list=base.filter(f[2]);
   if(q) list=all.filter(d=>[d.nom,d.prenom,d.tel,d.ville,d.cp,d.email,d.poseur,d.source].join(" ").toLowerCase().includes(q));
   list.sort((a,b)=>(Number(a.etape)||99)-(Number(b.etape)||99) || b.createdAt-a.createdAt);
   return `
   <input type="search" id="q" placeholder="Rechercher nom, tél, ville…" value="${esc(S.q)}" style="margin-bottom:10px">
-  <div class="chips">${FILTRES.map(([k,l,fn])=>`<button class="chip ${S.filter===k&&!q?"on":""}" data-filter="${k}">${l}<b>${all.filter(fn).length}</b></button>`).join("")}</div>
+  <div class="row wrap" style="gap:8px;margin-bottom:8px"><select id="srcFiltre" style="flex:1;min-width:180px"><option value="">Toutes les sources (${all.length})</option>${srcs.map(x=>`<option ${S.src===x?"selected":""} value="${esc(x)}">${esc(x)} (${all.filter(d=>srcKey(d)===x).length})</option>`).join("")}</select></div>
+  <div class="chips">${FILTRES.map(([k,l,fn])=>`<button class="chip ${S.filter===k&&!q?"on":""}" data-filter="${k}">${l}<b>${base.filter(fn).length}</b></button>`).join("")}</div>
+  <p class="small muted" style="margin:-4px 0 10px">${({tous:"Toutes les fiches.",trier:"Fiches importées (Effy, Hello Artisan, anciens Sheets) : ouvre-les, décide « à rappeler », « suivi long terme » ou « perdu », puis décoche « à vérifier ».",leads:"Personnes à appeler ou en cours de qualification.",encours:"Tes priorités : devis envoyés, dossiers MPR/CEE, poses à planifier et programmées.",encaisser:"Chantiers posés dont les aides ne sont pas encore payées.",soldes:"Dossiers payés et clôturés.",suivi:"Pas pour maintenant : à relancer plus tard.",perdus:"Refus définitif ou opposition."})[f[0]]}</p>
   <div class="list">${list.map(itemRow).join("")||'<div class="card empty">Aucun dossier ici.</div>'}</div>
   <button class="fab" data-act="new" aria-label="Nouveau dossier">+</button>`;
 }
@@ -1267,7 +1272,9 @@ const GROUPES = [
   {k:"solde",l:"Soldés",et:[11],c:"#6b7280"},
   {k:"suivi",l:"Suivi long terme",et:[12],c:"#9a8f7a"},
 ];
-const groupeOf = d => GROUPES.find(g=>g.et.includes(Number(d.etape)));
+const groupeOf = d => GROUPES_CARTE.find(g=>g.et.includes(Number(d.etape)));
+const GROUPES_CARTE = [...GROUPES, {k:"perdu",l:"Perdus",et:[0],c:"#b91c1c"}];
+const km = (a,b) => { const R=6371, r=x=>x*Math.PI/180; const dl=r(b.lat-a.lat), dn=r(b.lon-a.lon); const h=Math.sin(dl/2)**2+Math.cos(r(a.lat))*Math.cos(r(b.lat))*Math.sin(dn/2)**2; return 2*R*Math.asin(Math.sqrt(h)); };
 
 /* ============================================================
    KANBAN
@@ -1306,9 +1313,9 @@ function loadLeaflet(){
   return LEAF;
 }
 function viewCarte(){
-  const f=S.mapF||(S.mapF={groupes:["lead","montage","pose","installe"],poseur:"",mode:"tous"});
-  const sansGeo=actifs().filter(d=>Number(d.etape)!==0 && !d.geo && (d.cp||d.ville)).length;
-  return `<div class="chips">${GROUPES.map(g=>`<button class="chip ${f.groupes.includes(g.k)?"on":""}" data-mact="mapgroupe" data-k="${g.k}" style="${f.groupes.includes(g.k)?`background:${g.c};border-color:${g.c}`:""}">${g.l}</button>`).join("")}</div>
+  const f=S.mapF||(S.mapF={groupes:GROUPES_CARTE.map(g=>g.k),poseur:"",mode:"tous"});
+  const sansGeo=actifs().filter(d=>!d.geo && !d.geoFail && (d.cp||d.ville)).length;
+  return `<div class="chips">${GROUPES_CARTE.map(g=>`<button class="chip ${f.groupes.includes(g.k)?"on":""}" data-mact="mapgroupe" data-k="${g.k}" style="${f.groupes.includes(g.k)?`background:${g.c};border-color:${g.c}`:""}">${g.l}</button>`).join("")}</div>
   <div class="row wrap" style="gap:8px;margin-bottom:10px">
     <div class="seg" style="flex:1;min-width:220px"><button data-mact="mapmode" data-v="tous" class="${f.mode==="tous"?"on":""}">Tous</button><button data-mact="mapmode" data-v="tournee" class="${f.mode==="tournee"?"on":""}">Tournées</button></div>
     <select id="mapPoseur" data-mact-change="mappeseur" style="flex:1;min-width:140px"><option value="">Tous les poseurs</option>${poseursList().map(p=>`<option ${f.poseur===p?"selected":""}>${esc(p)}</option>`).join("")}</select>
@@ -1328,7 +1335,7 @@ async function initCarte(){
   geocodeMissing();
 }
 function mapDossiers(){
-  const f=S.mapF; let list=actifs().filter(d=>d.geo && Number(d.etape)!==0);
+  const f=S.mapF; let list=actifs().filter(d=>d.geo);
   if(f.poseur) list=list.filter(d=>String(d.poseur||"").toLowerCase().includes(f.poseur.toLowerCase()));
   if(f.mode==="tournee") return list.filter(d=>d.datePose && [6,7].includes(Number(d.etape)) && daysSince(d.datePose)<=0);
   return list.filter(d=>f.groupes.includes((groupeOf(d)||{}).k));
@@ -1356,11 +1363,13 @@ function drawCarte(fit){
   }
   if(fit && pts.length) MAP.fitBounds(pts,{padding:[30,30],maxZoom:11});
 }
-function popupHtml(d){ return `<b>${esc(fullName(d))}</b><br>${esc(etapeLabel(d.etape))}<br>${esc([d.adresse,d.cp,d.ville].filter(Boolean).join(" "))}${d.datePose?`<br>Pose : ${fmtDate(d.datePose)} · ${esc(d.poseur||"")}`:""}<br><a href="#" data-open="${esc(d.id)}">Ouvrir le dossier</a>`; }
+function popupHtml(d){
+  const proches=d.geo?actifs().filter(x=>x.id!==d.id && x.geo && Number(x.etape)!==0).map(x=>({x,k:km(d.geo,x.geo)})).filter(o=>o.k<=25).sort((a,b)=>a.k-b.k).slice(0,6):[];
+  return `<b>${esc(fullName(d))}</b><br>${esc(etapeLabel(d.etape))} · ${esc(srcKey(d))}<br>${esc([d.adresse,d.cp,d.ville].filter(Boolean).join(" "))}${d.tel?`<br>${esc(d.tel)}`:""}${d.datePose?`<br>Pose : ${fmtDate(d.datePose)} · ${esc(d.poseur||"")}`:""}<br><a href="#" data-open="${esc(d.id)}">Ouvrir le dossier</a>${proches.length?`<div style="margin-top:6px;border-top:1px solid #ddd;padding-top:6px"><b>Clients à moins de 25 km</b>${proches.map(o=>`<br><a href="#" data-open="${esc(o.x.id)}">${esc(fullName(o.x))}</a> — ${Math.round(o.k)} km <span style="color:#777">(${esc(etapeLabel(o.x.etape))})</span>`).join("")}</div>`:`<div style="margin-top:6px;color:#777">Aucun autre client à moins de 25 km.</div>`}`; }
 let geocoding=false;
 async function geocodeMissing(){
   if(geocoding||!navigator.onLine) return; geocoding=true;
-  const todo=actifs().filter(d=>Number(d.etape)!==0 && !d.geo && !d.geoFail && (d.cp||d.ville));
+  const todo=actifs().filter(d=>!d.geo && !d.geoFail && (d.cp||d.ville));
   let done=0;
   for(let i=0;i<todo.length;i+=8){
     await Promise.all(todo.slice(i,i+8).map(async d=>{
@@ -1378,6 +1387,40 @@ async function geocodeMissing(){
     done=Math.min(todo.length,i+8); const info=$("#mapInfo"); if(info) info.textContent=done<todo.length?`Localisation des adresses : ${done}/${todo.length}…`:""; drawCarte(false);
   }
   geocoding=false; if(todo.length){ drawCarte(true); scheduleSync(); }
+}
+
+/* ============================================================
+   AGENDA DES TÂCHES (rappels, relances, poses, échéances)
+   ============================================================ */
+const addJ = (d,n) => { const t=new Date(String(d).slice(0,10)+"T12:00"); if(isNaN(t)) return ""; t.setDate(t.getDate()+n); return t.toISOString().slice(0,10); };
+function tachesAgenda(){
+  const T=[]; const t0=today();
+  for(const d of actifs()){ const e=Number(d.etape); const ville=d.ville||d.cp||"";
+    const add=(date,type,txt,ic)=>T.push({d,date:date?String(date).slice(0,10):"",type,txt,ic,ville});
+    if(E.lead(e) && !d.aVerifier){ if(d.rappelLe) add(d.rappelLe,"rappel","Rappeler"+(String(d.rappelLe).length>10?" à "+String(d.rappelLe).slice(11,16):""),"📞"); else add("","rappel","Appeler (pas de date de rappel)","📞"); }
+    if(e===12 && d.rappelLTLe) add(d.rappelLTLe,"suivi","Relance suivi long terme","🔁");
+    if(e===4 && d.dateEnvoiDevis && d.statutDevis!=="Refusé"){ const nx=[3,7,14].map(n=>addJ(d.dateEnvoiDevis,n)).find(x=>x>=t0)||addJ(d.dateEnvoiDevis,14); add(nx,"devis","Relancer le devis","📄"); }
+    if(e===5) add(d.dateSignatureDevis?addJ(d.dateSignatureDevis,7):"","pieces","Compléter pièces / déposer MPR-OPX","🗂️");
+    if((e===6||e===7) && !d.datePose) add("","programmer","Programmer la pose","🗓️");
+    if((e===6||e===7) && d.datePose){ add(d.datePose,"pose","Pose"+(d.poseur?" · "+d.poseur:" · ⚠ sans poseur"),"🔧"); if(!d.dateCommande) add(addJ(d.datePose,-7),"commande","Commander le matériel","📦"); else if(d.dateLivraison && !d.livreLe) add(d.dateLivraison,"livraison","Livraison matériel","🚚"); }
+    if(e===8) add(d.dateInstallation||d.datePose?addJ(d.dateInstallation||d.datePose,3):"","facture","Facturer et déposer les soldes","🧾");
+    if(e===10 && d.dateDemandeSolde) add(addJ(d.dateDemandeSolde,15),"relance-aide","Relancer le paiement MPR / CEE","💶");
+    if(d.dateFactureFournisseur && !d.fournisseurPayeLe) add(addJ(d.dateFactureFournisseur,45),"fournisseur","Payer le fournisseur"+(d.fournisseur?" "+d.fournisseur:""),"🏭");
+    if(num(d.commission)>0 && !d.commissionPayeeLe && (d.dateInstallation||d.datePose) && e>=8) add(addJ(d.dateInstallation||d.datePose,30),"commission","Payer la commission","🤝");
+  }
+  return T;
+}
+function viewAgenda(){
+  const T=tachesAgenda(); const t0=today(); const in7=addJ(t0,7); const in30=addJ(t0,30);
+  const types=S.agTypes||null;
+  const F_=x=>!types||types.includes(x.type);
+  const L=T.filter(F_);
+  const grp=[["⚠️ En retard",x=>x.date&&x.date<t0],["Aujourd'hui",x=>x.date===t0],["7 prochains jours",x=>x.date>t0&&x.date<=in7],["Dans le mois",x=>x.date>in7&&x.date<=in30],["Sans date — à programmer",x=>!x.date]];
+  const row=x=>`<div class="card item" data-open="${esc(x.d.id)}"><span style="font-size:1.2rem">${x.ic}</span><div class="grow"><div class="t">${esc(fullName(x.d))} <span class="muted small">· ${esc(x.ville)}</span></div><div class="s">${esc(x.txt)}${x.date?" · "+fmtDate(x.date):""}${x.d.tel?" · "+esc(x.d.tel):""}</div></div><span class="pill-etape">${esc(etapeLabel(x.d.etape))}</span></div>`;
+  const TY=[["rappel","Rappels"],["programmer","À programmer"],["pose","Poses"],["devis","Relances devis"],["pieces","Pièces / MPR"],["commande","Commandes"],["facture","Factures"],["relance-aide","Relances aides"],["fournisseur","Fournisseurs"],["commission","Commissions"],["suivi","Suivi LT"]];
+  return `<div class="chips"><button class="chip ${!types?"on":""}" data-mact="agtype" data-v="">Tout<b>${T.length}</b></button>${TY.map(([k,l])=>{const n=T.filter(x=>x.type===k).length; return n?`<button class="chip ${types&&types.includes(k)?"on":""}" data-mact="agtype" data-v="${k}">${l}<b>${n}</b></button>`:"";}).join("")}</div>
+  ${grp.map(([titre,fn])=>{ const g=L.filter(fn).sort((a,b)=>(a.date||"").localeCompare(b.date||"")); return g.length?`<h2>${titre} <span class="muted small">(${g.length})</span></h2><div class="list">${g.slice(0,80).map(row).join("")}${g.length>80?`<div class="card empty small">… et ${g.length-80} autres</div>`:""}</div>`:""; }).join("") || '<div class="card empty">Aucune tâche. 👌</div>'}
+  <p class="small muted">Les tâches se créent toutes seules à partir des dates des fiches (rappel, envoi du devis, pose, facture fournisseur…). Pour programmer un rappel, ouvre la fiche et remplis « Rappeler le ».</p>`;
 }
 
 /* ============================================================
@@ -1583,6 +1626,8 @@ document.addEventListener("click", async e=>{
     case "week": { const cur=S.week?new Date(S.week):mondayOf(new Date()); if(b.dataset.v==="0") S.week=null; else { cur.setDate(cur.getDate()+7*Number(b.dataset.v)); S.week=cur.getTime(); } render(); break; }
     case "plsave": { const day=$("#pmDate").value; d.dureeJours=$("#pmDuree").value||1; closeModal(); if(day) await placePose(d,day,$("#pmPoseur").value); else { d.poseur=$("#pmPoseur").value; await saveDossier(d); render(); } break; }
     case "gtab": S.gtab=b.dataset.v; render(); break;
+    case "pltab": S.pltab=b.dataset.v; render(); break;
+    case "agtype": { const v=b.dataset.v; if(!v) S.agTypes=null; else { const a=S.agTypes||[]; const i=a.indexOf(v); if(i>=0) a.splice(i,1); else a.push(v); S.agTypes=a.length?a:null; } render(); break; }
     case "per": S.per=Number(b.dataset.v); render(); break;
     case "payer": { const t=b.dataset.type; if(!(await confirmBox(`Marquer ${t==="poseur"?"la pose":"la commission"} de ${fullName(d)} comme payée ?`))) break; if(t==="poseur") d.poseurPayeLe=today(); else d.commissionPayeeLe=today(); await saveDossier(d); render(); break; }
     case "cmdok": { d.dateCommande=today(); await saveDossier(d); toast("Commande notée"); render(); break; }
@@ -1609,6 +1654,7 @@ document.addEventListener("click", async e=>{
 }, true);
 document.addEventListener("change", e=>{
   const el=e.target;
+  if(el.id==="srcFiltre"){ S.src=el.value; render(); return; }
   if(el.id==="mapPoseur"){ S.mapF.poseur=el.value; S._keepMap=true; render(); return; }
   if(el.classList && el.classList.contains("rs")){ const v=el.value; setPath(editableSettings(), el.dataset.rs, /capacite|coutsLead/.test(el.dataset.rs)?num(v):v); }
 });
