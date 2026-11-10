@@ -641,8 +641,8 @@ const FILTRES = [
   ["trier","À trier",d=>!!d.aVerifier],
   ["leads","Leads à rappeler",d=>E.lead(Number(d.etape)) && !d.aVerifier],
   ["encours","En cours (devis → pose)",d=>Number(d.etape)>=4&&Number(d.etape)<=7],
-  ["encaisser","Posés · à encaisser",d=>E.enCours(Number(d.etape))],
-  ["soldes","Soldés",d=>Number(d.etape)===11],
+  ["encaisser","Installés · à encaisser",d=>E.enCours(Number(d.etape))],
+  ["soldes","Installés · payés",d=>Number(d.etape)===11],
   ["suivi","Suivi long terme",d=>Number(d.etape)===12],
   ["perdus","Perdus",d=>Number(d.etape)===0],
 ];
@@ -673,7 +673,7 @@ function viewPipeline(){
   <input type="search" id="q" placeholder="Rechercher nom, tél, ville…" value="${esc(S.q)}" style="margin-bottom:10px">
   <div class="row wrap" style="gap:8px;margin-bottom:8px"><select id="srcFiltre" style="flex:1;min-width:180px"><option value="">Toutes les sources (${all.length})</option>${srcs.map(x=>`<option ${S.src===x?"selected":""} value="${esc(x)}">${esc(x)} (${all.filter(d=>srcKey(d)===x).length})</option>`).join("")}</select></div>
   <div class="chips">${FILTRES.map(([k,l,fn])=>`<button class="chip ${S.filter===k&&!q?"on":""}" data-filter="${k}">${l}<b>${base.filter(fn).length}</b></button>`).join("")}</div>
-  <p class="small muted" style="margin:-4px 0 10px">${({tous:"Toutes les fiches.",trier:"Fiches importées (Effy, Hello Artisan, anciens Sheets) : ouvre-les, décide « à rappeler », « suivi long terme » ou « perdu », puis décoche « à vérifier ».",leads:"Personnes à appeler ou en cours de qualification.",encours:"Tes priorités : devis envoyés, dossiers MPR/CEE, poses à planifier et programmées.",encaisser:"Chantiers posés dont les aides ne sont pas encore payées.",soldes:"Dossiers payés et clôturés.",suivi:"Pas pour maintenant : à relancer plus tard.",perdus:"Refus définitif ou opposition."})[f[0]]}</p>
+  <p class="small muted" style="margin:-4px 0 10px">${({tous:"Toutes les fiches.",trier:"Fiches importées (Effy, Hello Artisan, anciens Sheets) : ouvre-les, décide « à rappeler », « suivi long terme » ou « perdu », puis décoche « à vérifier ».",leads:"Personnes à appeler ou en cours de qualification.",encours:"Tes priorités : devis envoyés, dossiers MPR/CEE, poses à planifier et programmées.",encaisser:"Chantiers posés dont les aides ne sont pas encore payées.",soldes:"Chantiers installés et entièrement payés (CEE + MPR reçues).",suivi:"Pas pour maintenant : à relancer plus tard.",perdus:"Refus définitif ou opposition."})[f[0]]}</p>
   <div class="list">${list.map(itemRow).join("")||'<div class="card empty">Aucun dossier ici.</div>'}</div>
   <button class="fab" data-act="new" aria-label="Nouveau dossier">+</button>`;
 }
