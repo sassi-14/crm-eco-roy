@@ -1405,8 +1405,8 @@ function tachesAgenda(){
     if((e===6||e===7) && d.datePose){ add(d.datePose,"pose","Pose"+(d.poseur?" · "+d.poseur:" · ⚠ sans poseur"),"🔧"); if(!d.dateCommande) add(addJ(d.datePose,-7),"commande","Commander le matériel","📦"); else if(d.dateLivraison && !d.livreLe) add(d.dateLivraison,"livraison","Livraison matériel","🚚"); }
     if(e===8) add(d.dateInstallation||d.datePose?addJ(d.dateInstallation||d.datePose,3):"","facture","Facturer et déposer les soldes","🧾");
     if(e===10 && d.dateDemandeSolde) add(addJ(d.dateDemandeSolde,15),"relance-aide","Relancer le paiement MPR / CEE","💶");
-    if(d.dateFactureFournisseur && !d.fournisseurPayeLe) add(addJ(d.dateFactureFournisseur,45),"fournisseur","Payer le fournisseur"+(d.fournisseur?" "+d.fournisseur:""),"🏭");
-    if(num(d.commission)>0 && !d.commissionPayeeLe && (d.dateInstallation||d.datePose) && e>=8) add(addJ(d.dateInstallation||d.datePose,30),"commission","Payer la commission","🤝");
+    if(e!==11 && d.dateFactureFournisseur && !d.fournisseurPayeLe) add(addJ(d.dateFactureFournisseur,45),"fournisseur","Payer le fournisseur"+(d.fournisseur?" "+d.fournisseur:""),"🏭");
+    if(num(d.commission)>0 && !d.commissionPayeeLe && (d.dateInstallation||d.datePose) && e>=8 && e<=10) add(addJ(d.dateInstallation||d.datePose,30),"commission","Payer la commission","🤝");
   }
   return T;
 }
