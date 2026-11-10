@@ -1249,15 +1249,25 @@ const DEFAULT_SET = {
   produits:["PAC air/eau","PAC + ballon thermo","PAC + ballon élec","Ballon thermodynamique","SSC","ITE","Photovoltaïque","Autre"],
   societe:{nom:"Eco Roy",tel:"09 72 14 91 62",mobile:"06 14 72 40 41",email:"contact@roy-consulting.com",site:"www.eco-roy.com",avisGoogle:""},
   modeles:[
-    {id:"m1",nom:"Premier contact",txt:"Bonjour {prenom}, c'est {societe}. Suite à votre demande pour une pompe à chaleur, je vous appelle pour vérifier votre éligibilité aux aides. Quand êtes-vous disponible ?"},
-    {id:"m2",nom:"Pièces manquantes",txt:"Bonjour {prenom}, pour finaliser votre dossier d'aides il nous manque : {pieces}. Une photo lisible par SMS ou par mail suffit. Merci ! {societe}"},
-    {id:"m3",nom:"Confirmation date de pose",txt:"Bonjour {prenom}, votre installation est programmée le {date_pose}. Notre technicien {poseur} arrivera dans la matinée. Pour toute question : {tel_societe}. {societe}"},
-    {id:"m4",nom:"Rappel veille de pose",txt:"Bonjour {prenom}, petit rappel : notre équipe intervient chez vous demain ({date_pose}). Merci de laisser l'accès à la chaudière et à l'emplacement de l'unité extérieure. {societe}"},
-    {id:"m5",nom:"Merci + avis Google",txt:"Bonjour {prenom}, merci pour votre confiance ! Si vous êtes satisfait de l'installation, un avis nous aiderait beaucoup : {avis_google}. {societe}"},
-    {id:"m6",nom:"Relance sans réponse",txt:"Bonjour {prenom}, j'ai essayé de vous joindre au sujet de votre projet de pompe à chaleur. Rappelez-moi au {tel_societe} quand vous pouvez. {societe}"},
+    {id:"m1",bot:"Marco",nom:"Premier contact",txt:"Bonjour {prenom}, suite à votre demande pour une pompe à chaleur, nous allons vous appeler pour vérifier votre éligibilité aux aides. Quand êtes-vous disponible ?"},
+    {id:"m2",bot:"Rémi",nom:"Pièces manquantes",txt:"Bonjour {prenom}, pour finaliser votre dossier d'aides il nous manque : {pieces}. Une photo lisible par SMS ou par mail suffit. Merci !"},
+    {id:"m3",bot:"Paula",nom:"Confirmation date de pose",txt:"Bonjour {prenom}, votre installation est programmée le {date_pose}. Notre technicien {poseur} arrivera dans la matinée. Pour toute question : {tel_societe}."},
+    {id:"m4",bot:"Paula",nom:"Rappel veille de pose",txt:"Bonjour {prenom}, petit rappel : notre équipe intervient chez vous demain ({date_pose}). Merci de laisser l'accès à la chaudière et à l'emplacement de l'unité extérieure."},
+    {id:"m5",bot:"Stella",nom:"Merci + avis Google",txt:"Bonjour {prenom}, merci pour votre confiance ! Si vous êtes satisfait de l'installation, un avis nous aiderait beaucoup : {avis_google}"},
+    {id:"m6",bot:"Marco",nom:"Relance sans réponse",txt:"Bonjour {prenom}, nous avons essayé de vous joindre au sujet de votre projet de pompe à chaleur. Rappelez-nous au {tel_societe} quand vous pouvez."},
+    {id:"m7",bot:"Marco",nom:"Relance devis",txt:"Bonjour {prenom}, avez-vous pu regarder votre devis ? Une question sur les aides, le matériel ou les délais ? Appelez-nous au {tel_societe}, on reprend tout avec vous."},
+    {id:"m8",bot:"Stan",nom:"Proposition entretien",txt:"Bonjour {prenom}, votre pompe à chaleur doit être entretenue pour garder sa garantie. Nous proposons 3 formules sans engagement : Essentiel 14,90 €/mois, Sérénité 26,90 €/mois, Premium 39,90 €/mois. Détails : eco-roy.fr/entretien-pompe-a-chaleur.html"},
+    {id:"m9",bot:"Paulo",nom:"Paiement des aides",txt:"Bonjour {prenom}, petit point sur votre dossier d'aides : nous suivons le paiement auprès de l'organisme. Nous revenons vers vous dès qu'il est versé."},
   ],
 };
-function SET(){ return Object.assign({}, DEFAULT_SET, CFG.settings||{}); }
+const BOTS_MSG=["Marco","Rémi","Paula","Stella","Stan","Paulo","Fred"];
+function SET(){ const o=Object.assign({}, DEFAULT_SET, CFG.settings||{});
+  // Chaque modèle est signé par un bot ; on complète les anciens modèles enregistrés et on ajoute les nouveaux
+  const def=Object.fromEntries(DEFAULT_SET.modeles.map(m=>[m.id,m]));
+  o.modeles=(o.modeles||[]).map(m=>m.bot?m:Object.assign({},m,{bot:(def[m.id]||{}).bot||"Marco"}));
+  for(const m of DEFAULT_SET.modeles) if(!o.modeles.some(x=>x.id===m.id)) o.modeles.push(m);
+  return o; }
+const signature = bot => bot ? `\n${bot} · assistant de l'équipe Eco Roy` : "";
 function poseursList(){ const base=SET().poseurs.map(p=>p.nom); const seen=new Set(base); for(const d of S.dossiers.values()) if(d.poseur && !seen.has(d.poseur) && !/\//.test(d.poseur)) seen.add(d.poseur); return [...seen]; }
 function capacite(nom){ const p=SET().poseurs.find(x=>x.nom.toLowerCase()===String(nom||"").toLowerCase()); return p?Number(p.capacite)||1:1; }
 async function pullSettings(){ if(CFG.role!=="admin") return; try{ const r=await api("getSettings"); if(r.settings){ CFG.settings=r.settings; saveCfg(); } }catch(e){ console.warn("réglages",e); } }
@@ -1571,9 +1581,9 @@ function fillTpl(txt,d){
 function telIntl(t){ let n=String(t||"").replace(/\D/g,""); if(n.startsWith("0")) n="33"+n.slice(1); return n; }
 function openContact(d){
   const ms=SET().modeles; const cur=S.ctpl||ms[0].id; const m=ms.find(x=>x.id===cur)||ms[0];
-  const txt=fillTpl(m.txt,d);
+  const txt=fillTpl(m.txt,d).replace(/\s*\{societe\}\s*$/,"")+signature(m.bot);
   openModal(`<h2 style="margin-top:0">Contacter ${esc(fullName(d))}</h2>
-    <div class="chips">${ms.map(x=>`<button class="chip ${x.id===m.id?"on":""}" data-mact="ctpl" data-v="${x.id}">${esc(x.nom)}</button>`).join("")}</div>
+    <div class="chips">${ms.map(x=>`<button class="chip ${x.id===m.id?"on":""}" data-mact="ctpl" data-v="${x.id}">${esc(x.nom)}${x.bot?` <span class="small">· ${esc(x.bot)}</span>`:""}</button>`).join("")}</div>
     <textarea id="ctxt" style="min-height:130px">${esc(txt)}</textarea>
     <div class="grid" style="grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px">
       <button class="btn primary" data-mact="send" data-c="sms" ${d.tel?"":"disabled"}>SMS</button>
@@ -1601,13 +1611,13 @@ function viewReglagesPlus(){
     <button class="btn" data-mact="addfour">+ Ajouter un fournisseur</button></div>
   <h2>Société (messages et documents)</h2><div class="card form">${[["nom","Nom commercial"],["tel","Téléphone"],["mobile","Mobile"],["email","E-mail"],["site","Site web"],["avisGoogle","Lien avis Google"]].map(([k,l])=>`<label class="f ${k==="avisGoogle"?"full":""}"><span>${l}</span><input type="text" class="rs" data-rs="societe.${k}" value="${esc(s.societe[k]||"")}"></label>`).join("")}</div>
   <h2>Modèles de messages</h2><div class="small muted" style="margin:-4px 0 8px">Variables : {prenom} {nom} {date_pose} {poseur} {pieces} {societe} {tel_societe} {avis_google}</div>
-  <div class="grid">${s.modeles.map((m,i)=>`<div class="card grid"><input type="text" class="rs" data-rs="modeles.${i}.nom" value="${esc(m.nom)}" style="font-weight:600"><textarea class="rs" data-rs="modeles.${i}.txt">${esc(m.txt)}</textarea><button class="btn" data-mact="rmmodele" data-i="${i}">Supprimer ce modèle</button></div>`).join("")}<button class="btn" data-mact="addmodele">+ Nouveau modèle</button></div>
+  <div class="grid">${s.modeles.map((m,i)=>`<div class="card grid"><input type="text" class="rs" data-rs="modeles.${i}.nom" value="${esc(m.nom)}" style="font-weight:600"><label class="f"><span>Signé par</span><select class="rs" data-rs="modeles.${i}.bot">${BOTS_MSG.map(b=>`<option ${m.bot===b?"selected":""}>${b}</option>`).join("")}</select></label><textarea class="rs" data-rs="modeles.${i}.txt">${esc(m.txt)}</textarea><button class="btn" data-mact="rmmodele" data-i="${i}">Supprimer ce modèle</button></div>`).join("")}<button class="btn" data-mact="addmodele">+ Nouveau modèle</button></div>
   <button class="btn primary block" style="margin-top:14px" data-mact="savesettings">Enregistrer les réglages</button>`;
 }
 function listEditor(k,arr){ return `<div class="row wrap" style="gap:6px;margin-bottom:8px">${(arr||[]).map((x,i)=>`<span class="chip" style="cursor:default">${esc(x)} <button data-mact="rmitem" data-k="${k}" data-i="${i}" aria-label="Supprimer ${esc(x)}" style="border:0;background:none;cursor:pointer;color:var(--danger);font-weight:700;padding:0 0 0 4px">✕</button></span>`).join("")}</div>
   <div class="row" style="gap:8px"><input type="text" id="add_${k}" placeholder="Ajouter…" class="grow"><button class="btn" data-mact="additem" data-k="${k}">Ajouter</button></div>`; }
 function setPath(obj,path,val){ const ks=path.split("."); let o=obj; for(let i=0;i<ks.length-1;i++){ const k=ks[i]; if(o[k]==null) o[k]=/^\d+$/.test(ks[i+1])?[]:{}; o=o[k]; } o[ks[ks.length-1]]=val; }
-function editableSettings(){ if(!CFG.settings) CFG.settings=JSON.parse(JSON.stringify(SET())); for(const k of Object.keys(DEFAULT_SET)) if(CFG.settings[k]==null) CFG.settings[k]=JSON.parse(JSON.stringify(DEFAULT_SET[k])); return CFG.settings; }
+function editableSettings(){ if(!CFG.settings) CFG.settings=JSON.parse(JSON.stringify(SET())); CFG.settings.modeles=JSON.parse(JSON.stringify(SET().modeles)); for(const k of Object.keys(DEFAULT_SET)) if(CFG.settings[k]==null) CFG.settings[k]=JSON.parse(JSON.stringify(DEFAULT_SET[k])); return CFG.settings; }
 
 /* ============================================================
    Événements du lot 1
@@ -1647,7 +1657,7 @@ document.addEventListener("click", async e=>{
     case "rmitem": { const k=b.dataset.k; const s=editableSettings(); const v=s[k][Number(b.dataset.i)]; if(await confirmBox(`Retirer « ${v} » de la liste ? (les dossiers existants le gardent)`)){ s[k].splice(Number(b.dataset.i),1); await pushSettings(); render(); } break; }
     case "addposeur": editableSettings().poseurs.push({nom:"Nouveau",capacite:1}); render(); break;
     case "rmposeur": editableSettings().poseurs.splice(Number(b.dataset.i),1); render(); break;
-    case "addmodele": editableSettings().modeles.push({id:"m"+Date.now(),nom:"Nouveau modèle",txt:"Bonjour {prenom}, "}); render(); break;
+    case "addmodele": editableSettings().modeles.push({id:"m"+Date.now(),bot:"Marco",nom:"Nouveau modèle",txt:"Bonjour {prenom}, "}); render(); break;
     case "rmmodele": editableSettings().modeles.splice(Number(b.dataset.i),1); render(); break;
     case "savesettings": await pushSettings(); render(); break;
   }
