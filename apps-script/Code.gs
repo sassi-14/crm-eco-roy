@@ -824,12 +824,14 @@ function prenomDe(d) { var p = String(d.prenom || '').trim(); return p ? p.charA
 /** Liste des messages dus maintenant : [{d, cle, sujet, texte, sms}] */
 function messagesDus(c) {
   var tel = c.TEL_SOCIETE || '09 72 14 91 62', agenda = c.LIEN_AGENDA || '';
-  var sig = '\n\nBien cordialement,\nL\'équipe Eco Roy\nROY CONSULTING — 37 av. de Saint-Mandé, 75012 Paris — ' + tel + '\n\nVous ne souhaitez plus recevoir nos messages ? Répondez « STOP ».';
+  var BOT = {accuse: 'Marco', nrp: 'Marco', devis: 'Marco', lt: 'Marco', pose: 'Paula', avis: 'Stella', entretien: 'Stan'};
+  function botDe(cle) { for (var k in BOT) if (String(cle).indexOf(k) === 0) return BOT[k]; return 'Marco'; }
+  function sigDe(bot) { return '\n\nBien cordialement,\n' + bot + ', assistant de l\'équipe Eco Roy\nROY CONSULTING — 37 av. de Saint-Mandé, 75012 Paris — ' + tel + '\n\nVous ne souhaitez plus recevoir nos messages ? Répondez « STOP ».'; }
   var out = [];
   readAll().forEach(function (r) {
     var d = r.data; if (d._deleted || d.oppositionContact || d.stopMails) return;
     var e = Number(d.etape), env = d.envois || {}, bj = prenomDe(d) ? 'Bonjour ' + prenomDe(d) : 'Bonjour';
-    function add(cle, sujet, texte, sms) { if (!env[cle]) out.push({d: d, cle: cle, sujet: sujet, texte: bj + ',\n\n' + texte + sig, sms: sms}); }
+    function add(cle, sujet, texte, sms) { if (!env[cle]) out.push({d: d, cle: cle, bot: botDe(cle), sujet: sujet, texte: bj + ',\n\n' + texte + sigDe(botDe(cle)), sms: sms ? sms + ' - ' + botDe(cle) + ', Eco Roy' : sms}); }
     // 01 · accusé de réception (leads arrivés depuis la mise en route)
     if (e >= 1 && e <= 2 && Number(d.createdAt) >= AUTO_START && joursDepuis(d.createdAt) <= 2)
       add('accuse', 'Eco Roy — nous avons bien reçu votre demande', 'Merci pour votre demande concernant votre projet de pompe à chaleur. Un conseiller Eco Roy vous rappelle très vite (en général dans l\'heure, du lundi au samedi).' +
