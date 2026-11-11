@@ -66,6 +66,7 @@ h3{font-size:14px;margin:0 0 8px;color:var(--muted);font-weight:600;text-transfo
 .qtri button{border:1px solid var(--line);background:var(--card);color:inherit;border-radius:8px;padding:5px 9px;font-size:12px;cursor:pointer;white-space:nowrap}
 .qtri button:hover{border-color:var(--brand)}
 .qtri button.ko{color:var(--danger)}
+.item .s{overflow-wrap:anywhere}
 .qtri button.go{background:var(--brand);border-color:var(--brand);color:#fff;font-weight:600;font-size:13px;padding:7px 12px}
 .qtri button.back{color:var(--muted,#888);border-style:dashed}
 .steps{display:flex;flex-direction:column;gap:8px;margin-bottom:10px}
@@ -220,6 +221,9 @@ const STATUT_APPEL = ["À contacter","NRP","À rappeler","Qualification en cours
 const CONFIRMATION = ["À confirmer","OK","KO"];
 const MOTIFS_KO = ["Pas éligible aux aides","Installation impossible (zone inondable…)","Emplacement chaudière inaccessible","Emplacement trop étroit","Autre motif technique / administratif"];
 const STATUT_DEVIS = ["À envoyer","Envoyé · en attente","Validé","Refusé","À modifier"];
+const TYPE_FINANCEMENT = ["Aides (MPR + CEE) + reste à charge","CEE seul + reste à charge","Comptant · sans aide","Crédit (Sofinco / Ecair)"];
+const RAC_STATUT = ["À encaisser","Acompte reçu","Encaissé"];
+const isComptant = d => /Comptant/.test(d.typeFinancement||"");
 const FINANCEMENT_RAC = ["Non proposé","Proposé","Accepté · dossier envoyé","Accordé","Refusé","Non souhaité"];
 const COMPTE_MPR = ["À créer","Créé · accès à vérifier","Bloqué · déblocage en cours","Déjà bénéficiaire · à vérifier","Accessible"];
 const COMPTE_OPX = ["À ouvrir","Déjà créé · à rattacher","Bloqué · en résolution","Déjà bénéficiaire CEE · à vérifier","Ouvert"];
@@ -229,13 +233,13 @@ const DISPO_MATERIEL = ["À confirmer","Réservé pour la date","Retard · autre
 const INCIDENTS = ["","Travaux impossibles (motif technique)","Client absent","Litige client","Autre incident"];
 const ENTRETIEN = ["Non proposé","Proposé","Souscrit · Essentiel","Souscrit · Sérénité","Souscrit · Premium","Refusé"];
 /* ---------- Verrous ---------- */
-const mprConcerne = d => couleurOf(d)!=="rose" && d.statutMPR!=="Non concerné";
+const mprConcerne = d => !isComptant(d) && d.typeFinancement!=="CEE seul + reste à charge" && couleurOf(d)!=="rose" && d.statutMPR!=="Non concerné";
 const MPR_DEPOSE = ["Déposé","Octroyé","Paiement demandé","Payé"];
 function finRetractation(d){ if(!d.dateSignatureDevis) return ""; const t=new Date(d.dateSignatureDevis); if(isNaN(t)) return ""; t.setDate(t.getDate()+14); return t.toISOString().slice(0,10); }
 function bloquantsPose(d){
   const b=[];
   if(mprConcerne(d) && !MPR_DEPOSE.includes(d.statutMPR)) b.push("dossier MPR pas encore déposé");
-  if(!d.statutOPX || d.statutOPX==="À déposer") { if(d.compteOPX!=="Ouvert") b.push("dossier OPX pas ouvert"); }
+  if(!isComptant(d) && (!d.statutOPX || d.statutOPX==="À déposer")) { if(d.compteOPX!=="Ouvert") b.push("dossier OPX pas ouvert"); }
   if(!d.renonciationRetractation){ const f=finRetractation(d); if(!f) b.push("date de signature du devis manquante (rétractation)"); else if(today()<f) b.push("rétractation en cours jusqu'au "+fmtDate(f)); }
   return b;
 }
@@ -304,7 +308,8 @@ function recettesPrev(d){ return num(d.valoCEE)+num(d.valoMPR)+num(d.rac); }
 function margePrev(d){ return recettesPrev(d)-couts(d); }
 function encaisse(d){ return num(d.encaisseCEE)+num(d.encaisseMPR)+num(d.rac); }
 function margeEncaissee(d){ return encaisse(d)-couts(d); }
-function resteAEncaisser(d){ return Math.max(0,num(d.valoCEE)-num(d.encaisseCEE))+Math.max(0,num(d.valoMPR)-num(d.encaisseMPR)); }
+function racDu(d){ if(!d.racStatut||d.racStatut==="Encaissé") return 0; return Math.max(0,num(d.rac)-num(d.racEncaisse)); }
+function resteAEncaisser(d){ return Math.max(0,num(d.valoCEE)-num(d.encaisseCEE))+Math.max(0,num(d.valoMPR)-num(d.encaisseMPR))+racDu(d); }
 function piecesOK(d){ return !!(d.pAvis && d.pCni && d.pDevis); }
 function photosOf(d,kind){ return (d.photos||[]).filter(p=>p.kind===kind && !p.del); }
 
@@ -379,6 +384,7 @@ function newDossier(extra){
 }
 async function saveDossier(d, opts){
   d.updatedAt=Date.now();
+  if(isComptant(d)){ if(!d.statutMPR||d.statutMPR==="À déposer") d.statutMPR="Non concerné"; if(!d.racStatut && Number(d.etape)>=5 && Number(d.etape)<=10) d.racStatut="À encaisser"; }
   S.dossiers.set(d.id,d);
   await DB.put("dossiers",d);
   await DB.put("outbox",{id:d.id,at:d.updatedAt});
@@ -699,20 +705,21 @@ const ACTIONS_ETAPE = {
 };
 function triButtons(d){
   const e=Number(d.etape);
+  const payBtn=(racDu(d)&&e>=5&&e<=10)?`<button data-mact="qtri" data-id="${esc(d.id)}" data-v="clientpaye">💳 Client a payé ${eur(racDu(d))}</button>`:"";
   const B=(v,l,cls)=>`<button data-mact="qtri" data-id="${esc(d.id)}" data-v="${v}" class="${cls||""}">${l}</button>`;
   if(d.aVerifier) return `<div class="qtri">${B("rappel","📞 À rappeler","go")}${B("nrp","🔕 NRP"+(Number(d.nbNRP)?" ("+d.nbNRP+")":""))}${B("devis","📄 Devis envoyé")}${B("signe","✍️ Signé")}${B("plustard","🔁 Plus tard")}${B("perdu","✖ Perdu","ko")}</div>`;
   const acts=ACTIONS_ETAPE[e]||[];
   const back=(e>=2&&e<=11)?B("retour","↩ Étape d'avant","back"):"";
-  return `<div class="qtri">${acts.map(([v,l,c])=>B(v,l+(v==="nrp"&&Number(d.nbNRP)?" ("+d.nbNRP+")":""),c)).join("")}${back}</div>`;
+  return `<div class="qtri">${payBtn}${acts.map(([v,l,c])=>B(v,l+(v==="nrp"&&Number(d.nbNRP)?" ("+d.nbNRP+")":""),c)).join("")}${back}</div>`;
 }
 function itemRow(d){
   const c=couleurOf(d); const al=alertsFor(d);
   return `<div class="card item" data-open="${esc(d.id)}" style="flex-wrap:wrap">
     <span class="pastille c-${c||"none"}" title="${esc(c||"couleur inconnue")}"></span>
     <div class="grow"><div class="t">${esc(fullName(d))}</div>
-      <div class="s">${esc([d.ville||d.cp, d.produit, d.source].filter(Boolean).join(" · "))}${d.tel?` · <a href="tel:${esc(String(d.tel).replace(/[^\d+]/g,""))}" data-stop="1">${esc(d.tel)}</a>`:""}</div></div>
+      <div class="s">${esc([d.ville||d.cp, d.produit, d.source].filter(Boolean).join(" · "))}${d.tel?` · <a href="tel:${esc(String(d.tel).replace(/[^\d+]/g,""))}" data-stop="1">${esc(d.tel)}</a>`:""}${d.email?` · <a href="mailto:${esc(d.email)}" data-stop="1">${esc(d.email)}</a>`:""}</div></div>
     <div style="text-align:right">
-      <div class="pill-etape">${esc(etapeLabel(d.etape))}</div>
+      <div class="pill-etape">${esc(etapeLabel(d.etape))}</div>${isComptant(d)?'<span class="badge grey">💳 comptant</span>':""}${racDu(d)?`<span class="badge warn">client doit ${eur(racDu(d))}</span>`:""}
       ${al.length?`<span class="badge ${al.some(a=>a.lvl==="danger")?"danger":"warn"}">${al.length} alerte${al.length>1?"s":""}</span>`:(d.aVerifier?'<span class="badge grey">à vérifier</span>':"")}
     </div>
     <div style="flex-basis:100%">${triButtons(d)}</div></div>`;
@@ -824,7 +831,9 @@ function viewDossier(d){
     <h3>Recettes</h3>
     <div class="form">${F(d,"valoCEE","Valo CEE (€)","number")}${F(d,"encaisseCEE","CEE encaissé (€)","number")}
       ${F(d,"valoMPR","Valo MPR (€)","number",{ph:isPAC(d)&&c?"estimée "+AIDE_MPR_PAC[c]:""})}${F(d,"encaisseMPR","MPR encaissé (€)","number")}
-      ${F(d,"rac","Reste à charge client (€)","number",{ph:"1"})}${F(d,"dateDemandeSolde","Solde demandé le","date")}</div>
+      ${F(d,"typeFinancement","Type de paiement","select",{options:TYPE_FINANCEMENT,allowEmpty:true})}${F(d,"rac",isComptant(d)?"Montant payé par le client (€)":"Reste à charge client (€)","number",{ph:"1"})}
+      ${F(d,"racStatut","Paiement client","select",{options:RAC_STATUT,allowEmpty:true})}${F(d,"racEncaisse","Déjà reçu du client (€)","number")}
+      ${F(d,"dateDemandeSolde","Solde demandé le","date")}</div>
     <h3 style="margin-top:18px">Coûts</h3>
     <div class="form">${F(d,"prixMateriel","Matériel (€)","number")}${F(d,"prixPoseur","Poseur (€)","number")}
       ${F(d,"regie","Régie / apporteur","text")}${F(d,"commission","Commission (€)","number")}
@@ -872,6 +881,7 @@ function parcoursView(d){
     ${F(d,"mentionCEE","Mention CEE (délégataire + montant) sur le devis","check",{full:true})}
     ${F(d,"renonciationRetractation","Client demande l'exécution avant la fin du délai de rétractation (case cochée sur le devis)","check",{full:true})}
     <label class="f"><span>Fin de rétractation</span><input type="text" value="${fr?esc(fmtDate(fr)):"—"}" disabled></label>
+    ${F(d,"typeFinancement","Type de paiement","select",{options:TYPE_FINANCEMENT,allowEmpty:true})}${F(d,"rac",isComptant(d)?"Montant payé par le client (€)":"Reste à charge client (€)","number")}
     ${F(d,"financementRAC","Financement du reste à charge","select",{options:FINANCEMENT_RAC})}${F(d,"organismeFinancement","Organisme","select",{options:["Ecair","Sofinco"],allowEmpty:true})}
     ${F(d,"partenaireVitrine","Offre Partenaire Vitrine (encart pub)","check")}${d.partenaireVitrine?F(d,"contratVitrineSigne","Contrat Vitrine signé","check")+F(d,"remiseVitrine","Remise inscrite sur la facture (€)","number"):""}</div>`)}
   ${sec("04","Documents & comptes",[5],`<div class="grid" style="grid-template-columns:1fr 1fr">${F(d,"pAvis","Avis d'impôt","check")}${F(d,"pCni","CNI","check")}${F(d,"pTaxeFonciere","Taxe foncière","check")}${F(d,"pJustifDomicile","Justificatif de domicile","check")}${F(d,"pDevisSigne","Devis signé","check")}${F(d,"pMandatMPR","Mandat MPR signé","check")}</div>
@@ -890,7 +900,8 @@ function parcoursView(d){
     ${F(d,"numFacture","N° de facture","text")}${F(d,"dateFacture","Date de facture","date")}
     ${F(d,"dateDemandeSolde","Solde déposé le (MPR / OPX)","date")}${F(d,"controleCOFRAC","Contrôle COFRAC","select",{options:["Non demandé","Demandé · à planifier","Conforme","Non conforme · à traiter"]})}</div>${bl(bloquantsFacture(d),"Facture bloquée tant que :")}`)}
   ${sec("08","Paiement, fournisseurs & commissions",[10,11],`<div class="form">
-    ${F(d,"encaisseCEE","CEE encaissé (€)","number")}${F(d,"encaisseMPR","MPR encaissé (€)","number")}
+    ${isComptant(d)?"":F(d,"encaisseCEE","CEE encaissé (€)","number")+F(d,"encaisseMPR","MPR encaissé (€)","number")}
+    ${F(d,"racStatut",isComptant(d)?"Paiement comptant du client":"Reste à charge du client","select",{options:RAC_STATUT,allowEmpty:true})}${F(d,"racEncaisse","Déjà reçu du client (€)","number")}
     ${F(d,"dateFactureFournisseur","Facture fournisseur du","date")}${F(d,"montantFactureFournisseur","Montant facture fournisseur (€)","number")}
     ${F(d,"fournisseurPayeLe","Fournisseur payé le","date")}<label class="f"><span>Échéance fournisseur (45 j)</span><input type="text" value="${d.dateFactureFournisseur?esc(fmtDate(new Date(new Date(d.dateFactureFournisseur).getTime()+45*864e5).toISOString().slice(0,10))):"—"}" disabled></label>
     ${F(d,"regie","Régie / apporteur","text")}${F(d,"commission","Commission (€)","number",{ph:"1000 à 1500"})}
@@ -1398,10 +1409,13 @@ async function initCarte(){
   const el=$("#map"); if(!el) return;
   let L; try{ L=await loadLeaflet(); }catch(e){ el.innerHTML=`<div class="empty">${esc(e.message)}</div>`; return; }
   if(MAP){ MAP.remove(); MAP=null; }
-  MAP=L.map(el,{zoomControl:true}).setView([46.6,2.4],6);
+  const vue=S.mapVue; // garde le zoom choisi par l'utilisateur entre deux rafraîchissements
+  MAP=L.map(el,{zoomControl:true}).setView(vue?vue.c:[46.6,2.4],vue?vue.z:6);
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:18,attribution:"© OpenStreetMap"}).addTo(MAP);
   MAPLAYER=L.layerGroup().addTo(MAP);
-  drawCarte(true);
+  MAP.on("moveend",()=>{ if(MAP) S.mapVue={c:MAP.getCenter(),z:MAP.getZoom()}; });
+  const refit=!vue || S._refitMap; S._refitMap=false;
+  drawCarte(refit);
   geocodeMissing();
 }
 function mapDossiers(){
@@ -1435,7 +1449,7 @@ function drawCarte(fit){
 }
 function popupHtml(d){
   const proches=d.geo?actifs().filter(x=>x.id!==d.id && x.geo && Number(x.etape)!==0).map(x=>({x,k:km(d.geo,x.geo)})).filter(o=>o.k<=25).sort((a,b)=>a.k-b.k).slice(0,6):[];
-  return `<b>${esc(fullName(d))}</b><br>${esc(etapeLabel(d.etape))} · ${esc(srcKey(d))}<br>${esc([d.adresse,d.cp,d.ville].filter(Boolean).join(" "))}${d.tel?`<br>${esc(d.tel)}`:""}${d.datePose?`<br>Pose : ${fmtDate(d.datePose)} · ${esc(d.poseur||"")}`:""}<br><a href="#" data-open="${esc(d.id)}">Ouvrir le dossier</a>${proches.length?`<div style="margin-top:6px;border-top:1px solid #ddd;padding-top:6px"><b>Clients à moins de 25 km</b>${proches.map(o=>`<br><a href="#" data-open="${esc(o.x.id)}">${esc(fullName(o.x))}</a> — ${Math.round(o.k)} km <span style="color:#777">(${esc(etapeLabel(o.x.etape))})</span>`).join("")}</div>`:`<div style="margin-top:6px;color:#777">Aucun autre client à moins de 25 km.</div>`}`; }
+  return `<b>${esc(fullName(d))}</b><br>${esc(etapeLabel(d.etape))} · ${esc(srcKey(d))}<br>${esc([d.adresse,d.cp,d.ville].filter(Boolean).join(" "))}${d.tel?`<br>${esc(d.tel)}`:""}${d.email?`<br>${esc(d.email)}`:""}${d.datePose?`<br>Pose : ${fmtDate(d.datePose)} · ${esc(d.poseur||"")}`:""}<br><a href="#" data-open="${esc(d.id)}">Ouvrir le dossier</a>${proches.length?`<div style="margin-top:6px;border-top:1px solid #ddd;padding-top:6px"><b>Clients à moins de 25 km</b>${proches.map(o=>`<br><a href="#" data-open="${esc(o.x.id)}">${esc(fullName(o.x))}</a> — ${Math.round(o.k)} km <span style="color:#777">(${esc(etapeLabel(o.x.etape))})</span>`).join("")}</div>`:`<div style="margin-top:6px;color:#777">Aucun autre client à moins de 25 km.</div>`}`; }
 let geocoding=false;
 async function geocodeMissing(){
   if(geocoding||!navigator.onLine) return; geocoding=true;
@@ -1456,7 +1470,7 @@ async function geocodeMissing(){
     }));
     done=Math.min(todo.length,i+8); const info=$("#mapInfo"); if(info) info.textContent=done<todo.length?`Localisation des adresses : ${done}/${todo.length}…`:""; drawCarte(false);
   }
-  geocoding=false; if(todo.length){ drawCarte(true); scheduleSync(); }
+  geocoding=false; if(todo.length){ drawCarte(!S.mapVue); scheduleSync(); }
 }
 
 /* ============================================================
@@ -1691,8 +1705,8 @@ document.addEventListener("click", async e=>{
   switch(act){
     case "kadvance": { const n=Number(d.etape); if(n>=11||n===0) break; if(!setEtape(d,n+1)) break; await saveDossier(d); toast(fullName(d)+" → "+etapeLabel(d.etape)); render(); break; }
     case "dossview": S.dossView=b.dataset.v; try{localStorage.setItem("ecoroy_dossview",S.dossView)}catch(_){ } render(); break;
-    case "mapgroupe": { const g=S.mapF.groupes; const i=g.indexOf(b.dataset.k); if(i>=0) g.splice(i,1); else g.push(b.dataset.k); S._keepMap=true; render(); break; }
-    case "mapmode": S.mapF.mode=b.dataset.v; S._keepMap=true; render(); break;
+    case "mapgroupe": { const g=S.mapF.groupes; const i=g.indexOf(b.dataset.k); if(i>=0) g.splice(i,1); else g.push(b.dataset.k); S._keepMap=true; S._refitMap=true; render(); break; }
+    case "mapmode": S.mapF.mode=b.dataset.v; S._keepMap=true; S._refitMap=true; render(); break;
     case "week": { const cur=S.week?new Date(S.week):mondayOf(new Date()); if(b.dataset.v==="0") S.week=null; else { cur.setDate(cur.getDate()+7*Number(b.dataset.v)); S.week=cur.getTime(); } render(); break; }
     case "plsave": { const day=$("#pmDate").value; d.dureeJours=$("#pmDuree").value||1; closeModal(); if(day) await placePose(d,day,$("#pmPoseur").value); else { d.poseur=$("#pmPoseur").value; await saveDossier(d); render(); } break; }
     case "gtab": S.gtab=b.dataset.v; render(); break;
@@ -1712,7 +1726,8 @@ document.addEventListener("click", async e=>{
       if(v==="pose"){ setEtape(d,8,true); if(!d.dateInstallation) d.dateInstallation=now; }
       if(v==="facture"){ const bl=bloquantsFacture(d); if(bl.length && !(await confirmBox("Attention : "+bl.join(" · ")+". Passer quand même en « Facturé » ?"))) break; setEtape(d,9); if(!d.dateFacture) d.dateFacture=now; }
       if(v==="paiement"){ setEtape(d,10); }
-      if(v==="solde"){ setEtape(d,11); if(!d.dateSolde) d.dateSolde=now; }
+      if(v==="solde"){ setEtape(d,11); if(!d.dateSolde) d.dateSolde=now; if(d.racStatut) d.racStatut="Encaissé"; }
+      if(v==="clientpaye"){ d.racStatut="Encaissé"; d.racEncaisse=num(d.rac)||d.racEncaisse; if(isComptant(d)&&Number(d.etape)>=8) setEtape(d,11); }
       if(v==="entretien"){ if(!d.entretien||d.entretien==="Non proposé") d.entretien="Proposé"; }
       if(v==="avis"){ d.avisDemandeLe=now; }
       if(v==="retour"){ const n=Number(d.etape); if(n>=2&&n<=11) setEtape(d,n-1,true); }
@@ -1746,7 +1761,7 @@ document.addEventListener("click", async e=>{
 document.addEventListener("change", e=>{
   const el=e.target;
   if(el.id==="srcFiltre"){ S.src=el.value; render(); return; }
-  if(el.id==="mapPoseur"){ S.mapF.poseur=el.value; S._keepMap=true; render(); return; }
+  if(el.id==="mapPoseur"){ S.mapF.poseur=el.value; S._keepMap=true; S._refitMap=true; render(); return; }
   if(el.classList && el.classList.contains("rs")){ const v=el.value; setPath(editableSettings(), el.dataset.rs, /capacite|coutsLead/.test(el.dataset.rs)?num(v):v); }
 });
 // Glisser-déposer (ordinateur) : kanban et planning
