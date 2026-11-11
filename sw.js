@@ -1,5 +1,5 @@
 // Service worker CRM Eco-Roy : l'appli s'ouvre même sans réseau.
-const CACHE = "ecoroy-crm-v11";
+const CACHE = "ecoroy-crm-v12";
 const SHELL = ["./", "index.html", "manifest.webmanifest", "icon-192.png", "icon-512.png"];
 
 self.addEventListener("install", e => {
