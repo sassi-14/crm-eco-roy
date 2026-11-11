@@ -66,6 +66,17 @@ h3{font-size:14px;margin:0 0 8px;color:var(--muted);font-weight:600;text-transfo
 .qtri button{border:1px solid var(--line);background:var(--card);color:inherit;border-radius:8px;padding:5px 9px;font-size:12px;cursor:pointer;white-space:nowrap}
 .qtri button:hover{border-color:var(--brand)}
 .qtri button.ko{color:var(--danger)}
+.qtri button.go{background:var(--brand);border-color:var(--brand);color:#fff;font-weight:600;font-size:13px;padding:7px 12px}
+.qtri button.back{color:var(--muted,#888);border-style:dashed}
+.steps{display:flex;flex-direction:column;gap:8px;margin-bottom:10px}
+.sph{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted,#888);margin:0 0 4px 2px}
+.srow{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;padding-bottom:2px}
+.sbtn{display:flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--card);color:inherit;border-radius:12px;padding:7px 10px;font-size:13px;white-space:nowrap;cursor:pointer}
+.sbtn b{background:var(--brand-soft);color:var(--brand-2);border-radius:99px;padding:1px 7px;font-size:12px}
+.sbtn.on{background:var(--brand);border-color:var(--brand);color:#fff}.sbtn.on b{background:rgba(255,255,255,.25);color:#fff}
+.sic{font-size:16px}
+.aide{background:var(--brand-soft);border-radius:12px;padding:10px 12px;margin-bottom:10px}
+.aide .at{font-weight:700;margin-bottom:3px}.vert{color:var(--brand-2)}
 @media (prefers-color-scheme:dark){.chip.on{color:#08130c}}
 .chip b{font-weight:700;margin-left:4px}
 .list{display:flex;flex-direction:column;gap:8px}
@@ -642,23 +653,57 @@ function viewDash(){
 }
 
 /* ----- Liste / pipeline ----- */
-const FILTRES = [
-  ["tous","Tous",()=>true],
-  ["trier","À trier",d=>!!d.aVerifier],
+/* Une étape = un onglet. Chaque fiche a ses boutons pour passer à l'étape suivante. */
+const ETAPES_UI = [
+  {k:"trier", ic:"🧺", l:"À trier", ph:"x", fn:d=>!!d.aVerifier, aide:"Fiches importées (Effy, Hello Artisan, anciens Sheets). Clique un bouton pour ranger chaque client."},
+  {k:"e1", ic:"📥", n:1, l:"Nouveaux leads", ph:"c", aide:"Un client vient d'arriver (site, pub, apporteur). Appelle-le vite : un lead rappelé dans l'heure signe 3× plus."},
+  {k:"e2", ic:"📞", n:2, l:"À appeler / qualifier", ph:"c", aide:"On l'appelle et on vérifie : propriétaire ? chauffage ? revenus ? Note les NRP, au 4e il part en suivi."},
+  {k:"e3", ic:"🤝", n:3, l:"Intéressé · devis à faire", ph:"c", aide:"Le client est partant : prépare et envoie le devis (Qhare), puis clique « Devis envoyé »."},
+  {k:"e4", ic:"📄", n:4, l:"Devis envoyés", ph:"c", aide:"Le devis est chez le client. Relance à J+3, J+7, J+14. Signé → clique « Signé »."},
+  {k:"e5", ic:"🗂️", n:5, l:"Dossier aides", ph:"m", aide:"Devis signé : récupère les pièces, ouvre le compte MPR et le dossier CEE (OPX), dépose MPR."},
+  {k:"e6", ic:"📅", n:6, l:"À planifier", ph:"m", aide:"Dossier prêt : choisis la date de pose et le poseur (Igor ou Kevin), commande le matériel."},
+  {k:"e7", ic:"🛠️", n:7, l:"Pose programmée", ph:"m", aide:"La date est fixée. Le jour J, quand c'est posé, clique « Posé »."},
+  {k:"e8", ic:"🏁", n:8, l:"Posé · à facturer", ph:"$", aide:"Chantier fini : fais la facture, envoie l'attestation, demande le solde MPR et le CEE."},
+  {k:"e9", ic:"🧾", n:9, l:"Facturé · aides déposées", ph:"$", aide:"Facture faite, demandes de paiement envoyées. On attend que l'Anah et le CEE paient."},
+  {k:"e10", ic:"💶", n:10, l:"Paiement en cours", ph:"$", aide:"Une partie est arrivée. Quand tout est reçu (CEE + MPR + reste à charge), clique « Tout reçu »."},
+  {k:"e11", ic:"🏆", n:11, l:"Soldé", ph:"$", aide:"Tout est payé. Propose le contrat d'entretien et demande un avis Google."},
+  {k:"e12", ic:"🔁", n:12, l:"Suivi long terme", ph:"x", aide:"Pas pour maintenant (pas prêt, injoignable, plus tard). À relancer de temps en temps."},
+  {k:"e0", ic:"✖", n:0, l:"Perdus", ph:"x", aide:"Refus définitif, faux lead, annulé. On ne recontacte plus."},
+  {k:"tous", ic:"📚", l:"Tous", ph:"x", fn:()=>true, aide:"Toutes les fiches, toutes étapes confondues."},
+];
+ETAPES_UI.forEach(x=>{ if(!x.fn) x.fn=d=>Number(d.etape)===x.n && !d.aVerifier; });
+const FILTRES_GROUPES = [
   ["leads","Leads à rappeler",d=>E.lead(Number(d.etape)) && !d.aVerifier],
-  ["devis","Devis envoyés",d=>Number(d.etape)===4],
   ["encours","En cours (dossier → pose)",d=>Number(d.etape)>=5&&Number(d.etape)<=7],
   ["encaisser","Installés · à encaisser",d=>E.enCours(Number(d.etape))],
-  ["soldes","Installés · payés",d=>Number(d.etape)===11],
-  ["suivi","Suivi long terme",d=>Number(d.etape)===12],
-  ["perdus","Perdus",d=>Number(d.etape)===0],
 ];
-const FILTRE_ALIAS={verifier:"trier",actifs:"tous",installes:"encaisser",poses:"encours"};
+const FILTRES = ETAPES_UI.map(x=>[x.k,x.l,x.fn]).concat(FILTRES_GROUPES);
+const FILTRE_ALIAS={verifier:"trier",actifs:"tous",installes:"encaisser",poses:"encours",devis:"e4",soldes:"e11",suivi:"e12",perdus:"e0"};
+const PHASES={c:"1 · Vendre",m:"2 · Monter & poser",$:"3 · Encaisser",x:"À côté"};
 const srcKey = d => { const x=String(d.source||"").toLowerCase(); if(/effy/.test(x)) return "Effy"; if(/hello/.test(x)) return "Hello Artisan"; if(/call|maroc|mabrour/.test(x)) return "Call Maroc"; if(/igor/.test(x)) return "Igor"; return d.source||"Sans source"; };
+/* Boutons d'action par étape : [code, libellé, style] — style "go" = bouton vert « étape suivante » */
+const ACTIONS_ETAPE = {
+  1:[["appele","📞 Appelé · à qualifier","go"],["nrp","🔕 Pas répondu"],["interesse","🤝 Intéressé"],["devis","📄 Devis envoyé"],["plustard","🔁 Plus tard"],["perdu","✖ Perdu","ko"]],
+  2:[["interesse","🤝 Intéressé · devis à faire","go"],["nrp","🔕 Pas répondu"],["devis","📄 Devis envoyé"],["plustard","🔁 Plus tard"],["perdu","✖ Perdu","ko"]],
+  3:[["devis","📄 Devis envoyé","go"],["plustard","🔁 Plus tard"],["perdu","✖ Perdu","ko"]],
+  4:[["signe","✍️ Signé","go"],["relance","📣 Relancé aujourd'hui"],["plustard","🔁 Plus tard"],["perdu","✖ Perdu / refusé","ko"]],
+  5:[["dossierok","✅ Dossier complet · à planifier","go"],["perdu","✖ Annulé","ko"]],
+  6:[["plan","📅 Choisir la date de pose","go"],["perdu","✖ Annulé","ko"]],
+  7:[["pose","🛠️ Posé","go"],["plan","📅 Décaler"],["perdu","✖ Annulé","ko"]],
+  8:[["facture","🧾 Facturé · aides demandées","go"]],
+  9:[["paiement","💶 Premier paiement reçu","go"],["solde","🏆 Tout reçu"]],
+  10:[["solde","🏆 Tout reçu","go"]],
+  11:[["entretien","🔧 Entretien proposé","go"],["avis","⭐ Avis Google demandé"]],
+  12:[["rappel","📞 Relancer maintenant","go"],["devis","📄 Devis envoyé"],["perdu","✖ Perdu","ko"]],
+  0:[["rappel","↩ Réactiver","go"]],
+};
 function triButtons(d){
-  const e=Number(d.etape); if(!(E.lead(e)||e===4||e===12||d.aVerifier)) return "";
+  const e=Number(d.etape);
   const B=(v,l,cls)=>`<button data-mact="qtri" data-id="${esc(d.id)}" data-v="${v}" class="${cls||""}">${l}</button>`;
-  return `<div class="qtri">${B("rappel","📞 À rappeler")}${B("nrp","🔕 NRP"+(Number(d.nbNRP)?" ("+d.nbNRP+")":""))}${B("devis","📄 Devis envoyé")}${B("signe","✍️ Signé")}${B("plustard","🔁 Plus tard")}${B("perdu","✖ Perdu","ko")}</div>`;
+  if(d.aVerifier) return `<div class="qtri">${B("rappel","📞 À rappeler","go")}${B("nrp","🔕 NRP"+(Number(d.nbNRP)?" ("+d.nbNRP+")":""))}${B("devis","📄 Devis envoyé")}${B("signe","✍️ Signé")}${B("plustard","🔁 Plus tard")}${B("perdu","✖ Perdu","ko")}</div>`;
+  const acts=ACTIONS_ETAPE[e]||[];
+  const back=(e>=2&&e<=11)?B("retour","↩ Étape d'avant","back"):"";
+  return `<div class="qtri">${acts.map(([v,l,c])=>B(v,l+(v==="nrp"&&Number(d.nbNRP)?" ("+d.nbNRP+")":""),c)).join("")}${back}</div>`;
 }
 function itemRow(d){
   const c=couleurOf(d); const al=alertsFor(d);
@@ -686,8 +731,8 @@ function viewPipeline(){
   return `
   <input type="search" id="q" placeholder="Rechercher nom, tél, ville…" value="${esc(S.q)}" style="margin-bottom:10px">
   <div class="row wrap" style="gap:8px;margin-bottom:8px"><select id="srcFiltre" style="flex:1;min-width:180px"><option value="">Toutes les sources (${all.length})</option>${srcs.map(x=>`<option ${S.src===x?"selected":""} value="${esc(x)}">${esc(x)} (${all.filter(d=>srcKey(d)===x).length})</option>`).join("")}</select></div>
-  <div class="chips">${FILTRES.map(([k,l,fn])=>`<button class="chip ${S.filter===k&&!q?"on":""}" data-filter="${k}">${l}<b>${base.filter(fn).length}</b></button>`).join("")}</div>
-  <p class="small muted" style="margin:-4px 0 10px">${({tous:"Toutes les fiches.",trier:"Fiches importées (Effy, Hello Artisan, anciens Sheets) : ouvre-les, décide « à rappeler », « suivi long terme » ou « perdu », puis décoche « à vérifier ».",leads:"Personnes à appeler ou en cours de qualification.",encours:"Tes priorités : devis envoyés, dossiers MPR/CEE, poses à planifier et programmées.",encaisser:"Chantiers posés dont les aides ne sont pas encore payées.",soldes:"Chantiers installés et entièrement payés (CEE + MPR reçues).",suivi:"Pas pour maintenant : à relancer plus tard.",perdus:"Refus définitif ou opposition."})[f[0]]}</p>
+  <div class="steps">${["c","m","$","x"].map(p=>`<div class="sgrp"><div class="sph">${PHASES[p]}</div><div class="srow">${ETAPES_UI.filter(x=>x.ph===p).map(x=>`<button class="sbtn ${S.filter===x.k&&!q?"on":""}" data-filter="${x.k}"><span class="sic">${x.ic}</span><span class="sl">${x.n!=null&&x.n>0?x.n+". ":""}${esc(x.l)}</span><b>${base.filter(x.fn).length}</b></button>`).join("")}</div></div>`).join("")}</div>
+  ${(()=>{ const u=ETAPES_UI.find(x=>x.k===f[0]); const g=FILTRES_GROUPES.find(x=>x[0]===f[0]); return q?"":`<div class="aide"><div class="at">${u?u.ic+" "+esc(u.l):"📌 "+esc(g?g[1]:"")} <span class="small muted">· ${list.length} client${list.length>1?"s":""}</span></div><div class="small">${u?esc(u.aide):"Vue regroupée."} <span class="muted">Le bouton <b class="vert">vert</b> fait passer le client à l'étape suivante.</span></div></div>`; })()}
   <div class="list">${list.map(itemRow).join("")||'<div class="card empty">Aucun dossier ici.</div>'}</div>
   <button class="fab" data-act="new" aria-label="Nouveau dossier">+</button>`;
 }
@@ -1659,6 +1704,18 @@ document.addEventListener("click", async e=>{
       if(v==="devis"){ setEtape(d,4); d.statutDevis="Envoyé · en attente"; if(!d.dateEnvoiDevis) d.dateEnvoiDevis=now; }
       if(v==="signe"){ setEtape(d,5); d.statutDevis="Signé"; if(!d.dateSignatureDevis) d.dateSignatureDevis=now; }
       if(v==="plustard"){ setEtape(d,12); }
+      if(v==="appele"){ setEtape(d,2); d.statutAppel="Qualification en cours"; }
+      if(v==="interesse"){ setEtape(d,3); d.statutAppel="Qualification en cours"; }
+      if(v==="relance"){ d.dateRelanceDevis=now; d.nbRelancesDevis=(Number(d.nbRelancesDevis)||0)+1; }
+      if(v==="dossierok"){ setEtape(d,6); }
+      if(v==="plan"){ d.aVerifier=false; openPlanMove(d); break; }
+      if(v==="pose"){ setEtape(d,8,true); if(!d.dateInstallation) d.dateInstallation=now; }
+      if(v==="facture"){ const bl=bloquantsFacture(d); if(bl.length && !(await confirmBox("Attention : "+bl.join(" · ")+". Passer quand même en « Facturé » ?"))) break; setEtape(d,9); if(!d.dateFacture) d.dateFacture=now; }
+      if(v==="paiement"){ setEtape(d,10); }
+      if(v==="solde"){ setEtape(d,11); if(!d.dateSolde) d.dateSolde=now; }
+      if(v==="entretien"){ if(!d.entretien||d.entretien==="Non proposé") d.entretien="Proposé"; }
+      if(v==="avis"){ d.avisDemandeLe=now; }
+      if(v==="retour"){ const n=Number(d.etape); if(n>=2&&n<=11) setEtape(d,n-1,true); }
       d.aVerifier=false; await saveDossier(d); toast(fullName(d)+" → "+etapeLabel(d.etape)+(v==="nrp"?" · NRP "+d.nbNRP:"")); render(); break; }
     case "qperdu": { setEtape(d,0); d.motifKO=b.dataset.v; d.aVerifier=false; closeModal(); await saveDossier(d); toast(fullName(d)+" → Perdu ("+b.dataset.v+")"); render(); break; }
     case "agtype": { const v=b.dataset.v; if(!v) S.agTypes=null; else { const a=S.agTypes||[]; const i=a.indexOf(v); if(i>=0) a.splice(i,1); else a.push(v); S.agTypes=a.length?a:null; } render(); break; }
