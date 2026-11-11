@@ -611,7 +611,8 @@ function viewDash(){
   const all=actifs(); const live=all.filter(d=>Number(d.etape)!==0);
   const aTrier=all.filter(d=>d.aVerifier).length;
   const leads=live.filter(d=>E.lead(Number(d.etape)) && !d.aVerifier).length;
-  const enCours=live.filter(d=>Number(d.etape)>=4&&Number(d.etape)<=7).length;
+  const enCours=live.filter(d=>Number(d.etape)>=5&&Number(d.etape)<=7).length;
+  const nbDevis=live.filter(d=>Number(d.etape)===4).length;
   const in7=live.filter(d=>d.datePose && E.planif(Number(d.etape)) && -daysSince(d.datePose)>=0 && -daysSince(d.datePose)<=7).length;
   const demande=live.filter(d=>[9,10].includes(Number(d.etape))).reduce((s,d)=>s+resteAEncaisser(d),0);
   const aFacturer=live.filter(d=>Number(d.etape)===8).reduce((s,d)=>s+resteAEncaisser(d),0);
@@ -624,6 +625,7 @@ function viewDash(){
   <div class="grid kpis">
     <div class="card kpi" data-nav="pipeline" data-filter="trier"><div class="v">${aTrier}</div><div class="l">Fiches à trier</div></div>
     <div class="card kpi" data-nav="pipeline" data-filter="leads"><div class="v">${leads}</div><div class="l">Leads à rappeler</div></div>
+    <div class="card kpi" data-nav="pipeline" data-filter="devis"><div class="v">${nbDevis}</div><div class="l">Devis envoyés · à relancer</div></div>
     <div class="card kpi" data-nav="pipeline" data-filter="encours"><div class="v">${enCours}</div><div class="l">En cours · priorités</div></div>
     <div class="card kpi" data-nav="planning"><div class="v">${tDues}</div><div class="l">Tâches du jour / en retard</div></div>
     <div class="card kpi" data-nav="planning"><div class="v">${in7}</div><div class="l">Poses sous 7 jours</div></div>
@@ -644,7 +646,8 @@ const FILTRES = [
   ["tous","Tous",()=>true],
   ["trier","À trier",d=>!!d.aVerifier],
   ["leads","Leads à rappeler",d=>E.lead(Number(d.etape)) && !d.aVerifier],
-  ["encours","En cours (devis → pose)",d=>Number(d.etape)>=4&&Number(d.etape)<=7],
+  ["devis","Devis envoyés",d=>Number(d.etape)===4],
+  ["encours","En cours (dossier → pose)",d=>Number(d.etape)>=5&&Number(d.etape)<=7],
   ["encaisser","Installés · à encaisser",d=>E.enCours(Number(d.etape))],
   ["soldes","Installés · payés",d=>Number(d.etape)===11],
   ["suivi","Suivi long terme",d=>Number(d.etape)===12],
