@@ -94,7 +94,43 @@ function setup() {
 /* ============================================================
    API (appelée par l'appli et par le formulaire du site)
    ============================================================ */
-function doGet() { return json({ok: true, app: 'CRM Eco-Roy', time: Date.now()}); }
+function doGet(e) {
+  var p = (e && e.parameter) || {};
+  if (p.action === 'actus') return json(actionActus());
+  return json({ok: true, app: 'CRM Eco-Roy', time: Date.now()});
+}
+function actusSheet() { return SpreadsheetApp.openById(PropertiesService.getScriptProperties().getProperty('DB_ID')).getSheetByName('Actualites'); }
+function actionActusAdmin() {
+  var sh = actusSheet(); if (!sh) return {articles: []};
+  var v = sh.getDataRange().getValues(); var out = [];
+  v.slice(1).forEach(function (r) { if (!r[0]) return; out.push({slug: String(r[0]), date: r[1] instanceof Date ? Utilities.formatDate(r[1], 'Europe/Paris', 'yyyy-MM-dd') : String(r[1] || ''), titre: String(r[2]), resume: String(r[3] || ''), contenu: String(r[4] || ''), categorie: String(r[5] || ''), sources: String(r[6] || ''), statut: String(r[7] || '')}); });
+  out.reverse(); return {articles: out};
+}
+function actionActuStatut(slug, statut) {
+  if (['publie', 'brouillon', 'refuse'].indexOf(statut) < 0) throw new Error('Statut inconnu');
+  var sh = actusSheet(); var v = sh.getDataRange().getValues();
+  for (var i = 1; i < v.length; i++) if (String(v[i][0]) === String(slug)) { sh.getRange(i + 1, 8).setValue(statut); CacheService.getScriptCache().remove('actus'); return {ok: true}; }
+  throw new Error('Article introuvable');
+}
+/* ----- Actualités du site : seules les lignes au statut « publie » sont servies ----- */
+function actionActus() {
+  var cache = CacheService.getScriptCache(); var c = cache.get('actus'); if (c) return JSON.parse(c);
+  var sh = SpreadsheetApp.openById(PropertiesService.getScriptProperties().getProperty('DB_ID')).getSheetByName('Actualites');
+  var out = [];
+  if (sh) {
+    var v = sh.getDataRange().getValues();
+    v.slice(1).forEach(function (r) {
+      var statut = String(r[7] || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+      if (statut !== 'publie' || !r[0] || !r[2]) return;
+      var d = r[1] instanceof Date ? Utilities.formatDate(r[1], 'Europe/Paris', 'yyyy-MM-dd') : String(r[1] || '');
+      out.push({slug: String(r[0]), date: d, titre: String(r[2]), resume: String(r[3] || ''), contenu: String(r[4] || ''), categorie: String(r[5] || ''), sources: String(r[6] || '')});
+    });
+  }
+  out.sort(function (a, b) { return a.date < b.date ? 1 : -1; });
+  var res = {articles: out.slice(0, 60)};
+  try { cache.put('actus', JSON.stringify(res), 600); } catch (err) {}
+  return res;
+}
 
 function doPost(e) {
   try {
@@ -109,6 +145,8 @@ function doPost(e) {
       case 'push': return json(actionPush(who, req.records || []));
       case 'upload': return json(actionUpload(who, req));
       case 'file': return json(actionFile(who, req.id));
+      case 'actusAdmin': if (who.role !== 'admin') throw new Error('Réservé au gérant'); return json(actionActusAdmin());
+      case 'actuStatut': if (who.role !== 'admin') throw new Error('Réservé au gérant'); return json(actionActuStatut(req.slug, req.statut));
       case 'regies': if (who.role !== 'admin') throw new Error('Réservé au gérant'); return json(actionRegies());
       case 'regieAdd': if (who.role !== 'admin') throw new Error('Réservé au gérant'); return json(actionRegieAdd(req.nom));
       case 'regieDel': if (who.role !== 'admin') throw new Error('Réservé au gérant'); return json(actionRegieDel(req.nom));
@@ -274,12 +312,13 @@ function actionLeadSite(req) {
     };
     Object.keys(add).forEach(function (k) { if (add[k] !== '' && (d[k] === undefined || d[k] === '' || d[k] === null)) d[k] = add[k]; });
     d.notes = ((d.notes || '') + '\n[Site ' + Utilities.formatDate(new Date(), 'Europe/Paris', 'dd/MM HH:mm') + '] ' + (req.message || '') + ' — score ' + score.score + '/100 (' + score.label + ')' + (req.utm ? ' — ' + req.utm : '')).trim();
+    if (req.rappelLe && /^\d{4}-\d\d-\d\dT\d\d:\d\d$/.test(String(req.rappelLe))) { d.rappelLe = String(req.rappelLe); d.statutAppel = 'À rappeler'; d.demandeRappel = 'Créneau choisi sur le site : ' + clean(req.creneau); d.notes += '\n📅 Créneau de rappel choisi : ' + clean(req.creneau); }
     if (!d.leadToken) d.leadToken = randomCode(20);
     d.updatedAt = Date.now();
     writeRecord(sh, index, d);
     notifyAdmin((score.label === 'chaud' ? '🔥 ' : '📥 ') + 'Lead site : ' + nomComplet(d) + ' — ' + (couleur || '?') + ' — ' + score.score + '/100',
       'Nouveau lead depuis le site.\n\nNom : ' + nomComplet(d) + '\nTél : ' + d.tel + '\nCP : ' + d.cp + ' ' + (d.ville || '') + '\nCouleur MPR : ' + (couleur || 'non calculable') +
-      '\nChauffage : ' + (d.chauffage || '?') + ' · Surface : ' + (d.surface || '?') + ' m²\nScore : ' + score.score + '/100 (' + score.label + ')\n' + score.detail.join('\n') + (exist ? '\n\n⚠️ Ce numéro existait déjà dans le CRM (fiche mise à jour).' : ''));
+      (d.rappelLe ? '\n📅 À rappeler : ' + (d.demandeRappel || d.rappelLe) : '') + '\nChauffage : ' + (d.chauffage || '?') + ' · Surface : ' + (d.surface || '?') + ' m²\nScore : ' + score.score + '/100 (' + score.label + ')\n' + score.detail.join('\n') + (exist ? '\n\n⚠️ Ce numéro existait déjà dans le CRM (fiche mise à jour).' : ''));
     return {ok: true, token: d.leadToken, couleur: couleur, aideMPR: couleur ? ({bleu: 5000, jaune: 4000, violet: 3000, rose: 0})[couleur] : null, score: score.score};
   } finally { lock.releaseLock(); }
 }
