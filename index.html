@@ -1062,7 +1062,7 @@ function viewReglages(){
     ${S.sync.err?`<div class="small neg">${esc(S.sync.err)}</div>`:""}
     <button class="btn" data-act="sync">Synchroniser maintenant</button>
     ${isAdmin()?`<button class="btn" data-act="export">Exporter une sauvegarde (JSON)</button>`:""}
-    ${isAdmin()&&CFG.role!=="demo"?`<button class="btn" data-act="poseurlink">Copier le lien d'accès poseur</button><button class="btn" data-act="regielink">Copier le lien d'accès régie</button><div class="small muted">Régies : ajoute une ligne « REGIE_Nom » + code PIN dans l'onglet Config de la Google Sheet. La régie voit uniquement les clients dont la source ou le champ « Régie » porte ce nom.</div>`:""}
+    ${isAdmin()&&CFG.role!=="demo"?`<button class="btn" data-act="poseurlink">Copier le lien d'accès poseur</button><button class="btn primary" data-act="regies">🤝 Gérer les accès des régies</button>`:""}
     <button class="btn danger" data-act="logout">Se déconnecter</button>
   </div>
   ${isAdmin()?`<h2>Poseurs</h2><div class="card grid"><label class="f"><span>Noms (séparés par des virgules)</span><input type="text" id="poseursIn" value="${esc(poseursList().join(", "))}"></label><button class="btn" data-act="saveposeurs">Enregistrer</button>
@@ -1125,6 +1125,10 @@ document.addEventListener("click", async e=>{
   switch(act){
     case "loginmode": S.loginMode=a.dataset.v; render(); break;
     case "regielink": { const link=location.origin+location.pathname+"#serveur="+encodeURIComponent(CFG.url)+"&mode=regie"; try{ await navigator.clipboard.writeText(link); toast("Lien régie copié. Envoie-le avec le nom et le PIN de la régie."); }catch(_){ openModal(`<h2 style="margin-top:0">Lien régie</h2><div style="word-break:break-all;user-select:all">${esc(link)}</div>`); } break; }
+    case "regies": await openRegies(); break;
+    case "regieadd": { const nom=($("#regNom")||{}).value?.trim(); if(!nom) break; try{ const r=await api("regieAdd",{nom}); await openRegies(r); }catch(e){ toast(e.message); } break; }
+    case "regiedel": { if(!(await confirmBox("Supprimer l'accès de la régie « "+a.dataset.nom+" » ? Elle ne pourra plus se connecter (ses clients restent dans le CRM)."))) break; try{ await api("regieDel",{nom:a.dataset.nom}); await openRegies(); }catch(e){ toast(e.message); } break; }
+    case "regiecopy": { const msg=a.dataset.msg; try{ await navigator.clipboard.writeText(msg); toast("Message copié : colle-le dans WhatsApp ou un mail à la régie"); }catch(_){ toast("Sélectionne le texte et copie-le"); } break; }
     case "regienew": S.view="nouveau"; window.scrollTo(0,0); render(); break;
     case "regiesave": await regieSave(); break;
     case "regiecom": { const dd=S.dossiers.get(a.dataset.id||S.param); const ta=$("#regieMsg"); const txt=(ta&&ta.value||"").trim(); if(!dd||!txt) break; (dd.commentairesRegie=dd.commentairesRegie||[]).push({t:Date.now(),by:isRegie()?(CFG.regie||"Régie"):"Eco Roy",txt}); await saveDossier(dd); toast("Message envoyé"); render(); break; }
@@ -1927,6 +1931,20 @@ window.__catImport = async function(items){ const mapped=items.map(i=>({categori
 
 
 
+
+async function openRegies(nouvelle){
+  openModal('<h2 style="margin-top:0">Accès des régies</h2><div class="small muted">Chargement…</div>');
+  let L=[]; try{ L=(await api("regies")).regies||[]; }catch(e){ openModal(`<h2 style="margin-top:0">Accès des régies</h2><div class="neg small">${esc(e.message)}</div>`); return; }
+  const lien=location.origin+location.pathname+"#serveur="+encodeURIComponent(CFG.url)+"&mode=regie";
+  const msg=r=>`Bonjour, voici votre accès au suivi de vos clients Eco Roy :\n1. Ouvrez ce lien : ${lien}\n2. Choisissez « Régie »\n3. Nom de la régie : ${r.nom}\n4. Code PIN : ${r.pin}\nVous pourrez y envoyer vos nouveaux clients et suivre chaque dossier. Merci de garder ce code pour vous.`;
+  openModal(`<h2 style="margin-top:0">Accès des régies</h2>
+  ${nouvelle?`<div class="alert" style="cursor:default"><span class="ic">✅</span><div class="grow">${nouvelle.existait?"Cette régie avait déjà un accès":"Accès créé"} : <b>${esc(nouvelle.nom)}</b> · PIN <b style="font-size:18px;letter-spacing:.08em">${esc(nouvelle.pin)}</b></div></div>`:""}
+  <div class="small muted" style="margin-bottom:8px">Une régie voit uniquement les clients dont la <b>source</b> ou le champ <b>« Régie »</b> porte son nom, sans les montants (sauf sa commission).</div>
+  <div class="grid" style="gap:8px">${L.map(r=>`<div class="card"><div class="row"><div class="grow"><b>${esc(r.nom)}</b> <span class="small muted">· ${r.clients} client${r.clients>1?"s":""}</span><div class="small">PIN : <b style="letter-spacing:.08em;user-select:all">${esc(r.pin)}</b></div></div></div>
+    <div class="row wrap" style="gap:6px;margin-top:6px"><button class="btn" data-act="regiecopy" data-msg="${esc(msg(r))}">📋 Copier le message d'accès</button><button class="btn danger" data-act="regiedel" data-nom="${esc(r.nom)}">Supprimer</button></div></div>`).join("")||'<div class="small muted">Aucune régie pour l\'instant.</div>'}</div>
+  <h3>Ajouter une régie</h3><div class="row" style="gap:6px"><input type="text" id="regNom" placeholder="Nom (tel qu'il apparaît en source)" style="flex:1;min-width:0"><button class="btn primary" data-act="regieadd">Créer</button></div>
+  <div class="small muted" style="margin-top:6px">Pour les nouveaux clients d'une régie, mets son nom dans le champ « Régie / apporteur » de la fiche (ou la régie les envoie elle-même depuis son accès).</div>`);
+}
 /* ---------- Espace régie : la régie voit uniquement ses clients ---------- */
 const REGIE_ETAPES=[["Reçu",[1]],["Appelé",[2,3]],["Devis envoyé",[4]],["Signé",[5,6,7]],["Posé",[8,9,10]],["Payé",[11]]];
 function regieStep(d){ const e=Number(d.etape); return REGIE_ETAPES.findIndex(x=>x[1].includes(e)); }
