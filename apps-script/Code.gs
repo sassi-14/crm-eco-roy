@@ -109,6 +109,9 @@ function doPost(e) {
       case 'push': return json(actionPush(who, req.records || []));
       case 'upload': return json(actionUpload(who, req));
       case 'file': return json(actionFile(who, req.id));
+      case 'regies': if (who.role !== 'admin') throw new Error('Réservé au gérant'); return json(actionRegies());
+      case 'regieAdd': if (who.role !== 'admin') throw new Error('Réservé au gérant'); return json(actionRegieAdd(req.nom));
+      case 'regieDel': if (who.role !== 'admin') throw new Error('Réservé au gérant'); return json(actionRegieDel(req.nom));
       case 'catalogue': if (who.role !== 'admin') throw new Error('Réservé au gérant'); return json({items: catRead()});
       case 'catalogueSave': if (who.role !== 'admin') throw new Error('Réservé au gérant'); return json(catSave(req));
       case 'getSettings': if (who.role !== 'admin') throw new Error('Réservé au gérant'); return json({settings: JSON.parse(PropertiesService.getScriptProperties().getProperty('SETTINGS') || 'null')});
@@ -583,6 +586,25 @@ function visibleForRegie(d, regie) {
   if (!d || d._deleted) return false;
   var k = keyNom(regie); if (!k) return false;
   return keyNom(d.regie) === k || keyNom(d.source) === k;
+}
+function configSheet() { return SpreadsheetApp.openById(PropertiesService.getScriptProperties().getProperty('DB_ID')).getSheetByName('Config'); }
+function actionRegies() {
+  var v = configSheet().getDataRange().getValues(); var all = readAll(); var out = [];
+  v.forEach(function (r) { var k = String(r[0] || ''); if (k.indexOf('REGIE_') !== 0) return; var nom = k.slice(6);
+    var n = all.filter(function (x) { return visibleForRegie(x.data, nom); }).length; out.push({nom: nom, pin: String(r[1]), clients: n}); });
+  return {regies: out};
+}
+function actionRegieAdd(nom) {
+  nom = String(nom || '').replace(/[^\wÀ-ÿ' -]/g, '').trim().slice(0, 40); if (!nom) throw new Error('Nom de régie vide');
+  var sh = configSheet(); var v = sh.getDataRange().getValues();
+  for (var i = 0; i < v.length; i++) if (String(v[i][0]).indexOf('REGIE_') === 0 && keyNom(String(v[i][0]).slice(6)) === keyNom(nom)) return {nom: String(v[i][0]).slice(6), pin: String(v[i][1]), existait: true};
+  var pin = randomPin(); sh.appendRow(['REGIE_' + nom, pin, 'PIN de la régie ' + nom]);
+  CacheService.getScriptCache().remove('cfg'); return {nom: nom, pin: pin};
+}
+function actionRegieDel(nom) {
+  var sh = configSheet(); var v = sh.getDataRange().getValues();
+  for (var i = v.length - 1; i >= 1; i--) if (String(v[i][0]).indexOf('REGIE_') === 0 && keyNom(String(v[i][0]).slice(6)) === keyNom(nom)) sh.deleteRow(i + 1);
+  CacheService.getScriptCache().remove('cfg'); return {ok: true};
 }
 function stripForRegie(d) { var o = {}; REGIE_FIELDS.forEach(function (k) { if (d[k] !== undefined) o[k] = d[k]; }); return o; }
 function mergeComments(a, b) {
