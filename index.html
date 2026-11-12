@@ -66,6 +66,30 @@ h3{font-size:14px;margin:0 0 8px;color:var(--muted);font-weight:600;text-transfo
 .qtri button{border:1px solid var(--line);background:var(--card);color:inherit;border-radius:8px;padding:5px 9px;font-size:12px;cursor:pointer;white-space:nowrap}
 .qtri button:hover{border-color:var(--brand)}
 .qtri button.ko{color:var(--danger)}
+.dhead{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin:2px 0 10px;flex-wrap:wrap}
+.dhead>div:first-child{min-width:0;flex:1}
+.kpi.mini{padding:8px 12px;text-align:right;cursor:pointer;border:1px solid var(--line);font:inherit;color:inherit}
+.kpi.mini .v{font-size:18px}.kpi.mini .l{font-size:12px}
+.prio{display:flex;gap:10px;overflow-x:auto;padding:4px 0 12px;align-items:flex-start;scroll-snap-type:x proximity}
+@media (min-width:900px){.prio{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));overflow:visible}.pcol{max-width:none}}
+.pcol{flex:0 0 272px;max-width:85vw;background:var(--brand-soft);border-radius:14px;padding:8px;scroll-snap-align:start;display:flex;flex-direction:column;max-height:calc(100vh - 230px)}
+.pcol.danger{background:var(--danger-soft)}
+.pcol header{display:flex;align-items:center;gap:6px;padding:4px 4px 8px;font-weight:700;font-size:14px}
+.pcol .ptitle{flex:1;min-width:0}
+.pcol .pic{font-size:18px}
+.pn{background:var(--card);border-radius:99px;padding:1px 8px;font-size:12px}
+.pn.late{background:var(--danger);color:#fff}
+.pcards{display:flex;flex-direction:column;gap:6px;overflow-y:auto;min-height:0}
+.pcard{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--line);border-radius:10px;padding:8px 9px;cursor:pointer}
+.pcard.late{border-left-color:var(--danger)}.pcard.today{border-left-color:var(--accent)}
+.pcard .pt{display:flex;justify-content:space-between;gap:6px;align-items:baseline;font-size:14px}
+.pcard .pt b{min-width:0;overflow-wrap:anywhere}
+.pdate{font-size:11px;white-space:nowrap;color:var(--muted,#888)}
+.pdate.late{color:var(--danger);font-weight:700}.pdate.today{color:var(--accent);font-weight:700}
+.pcard .ps{font-size:12px;opacity:.85;margin-top:2px;overflow-wrap:anywhere}
+.pact{margin-top:6px}
+.ptel{border:1px solid var(--line);border-radius:8px;padding:4px 8px;font-size:12px;text-decoration:none;white-space:nowrap}
+.pmore{border:1px dashed var(--line);background:none;color:inherit;border-radius:8px;padding:6px;font-size:12px;cursor:pointer}
 .iris-fab{position:fixed;left:14px;bottom:calc(76px + env(safe-area-inset-bottom));z-index:16;display:flex;align-items:center;gap:6px;border:0;border-radius:99px;padding:10px 14px;background:var(--accent);color:#fff;font-weight:700;font-size:15px;box-shadow:0 4px 14px rgba(0,0,0,.25);cursor:pointer}
 .iris-fab span{font-size:13px}
 .iris-panel{position:fixed;left:12px;bottom:calc(132px + env(safe-area-inset-bottom));z-index:30;width:min(380px,calc(100vw - 24px));height:min(560px,calc(100vh - 200px));background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:0 10px 40px rgba(0,0,0,.3);display:flex;flex-direction:column;overflow:hidden}
@@ -643,36 +667,50 @@ function demoData(){
 /* ----- Tableau de bord ----- */
 function actifs(){ return [...S.dossiers.values()].filter(d=>!d._deleted); }
 function viewDash(){
-  const all=actifs(); const live=all.filter(d=>Number(d.etape)!==0);
+  const all=actifs(); const live=all.filter(d=>Number(d.etape)!==0); const t0=today(); const in7=addJ(t0,7);
   const aTrier=all.filter(d=>d.aVerifier).length;
-  const leads=live.filter(d=>E.lead(Number(d.etape)) && !d.aVerifier).length;
-  const enCours=live.filter(d=>Number(d.etape)>=5&&Number(d.etape)<=7).length;
-  const nbDevis=live.filter(d=>Number(d.etape)===4).length;
-  const in7=live.filter(d=>d.datePose && E.planif(Number(d.etape)) && -daysSince(d.datePose)>=0 && -daysSince(d.datePose)<=7).length;
   const demande=live.filter(d=>[9,10].includes(Number(d.etape))).reduce((s,d)=>s+resteAEncaisser(d),0);
   const aFacturer=live.filter(d=>Number(d.etape)===8).reduce((s,d)=>s+resteAEncaisser(d),0);
-  const aEnc=demande+aFacturer;
-  const taches=tachesAgenda(); const tDues=taches.filter(t=>t.date && t.date<=today()).length;
-  const alerts=[]; for(const d of live) for(const a of alertsFor(d)) alerts.push({d,a});
-  alerts.sort((x,y)=>(x.a.lvl==="danger"?0:1)-(y.a.lvl==="danger"?0:1));
+  const racAvant=live.filter(d=>Number(d.etape)>=5&&Number(d.etape)<=7).reduce((s,d)=>s+racDu(d),0);
+  const aEnc=demande+aFacturer+racAvant;
+  const T=tachesAgenda();
   const sansMail=(SET().fournisseurs||[]).filter(f=>f.nom && !f.email).map(f=>f.nom);
+  // Colonnes de priorités (dans l'ordre du métier)
+  const COLS=[
+    {k:"urgent",ic:"🚨",t:"Bloquants",c:"danger"},
+    {k:"appel",ic:"📞",t:"Appeler les leads",types:["rappel"],max:30},
+    {k:"devis",ic:"📄",t:"Relancer les devis",types:["devis"],jusqua:t0},
+    {k:"dossier",ic:"🗂️",t:"Monter les dossiers aides",types:["pieces"]},
+    {k:"prog",ic:"📅",t:"Programmer & commander",types:["programmer","commande","livraison"],jusqua:in7},
+    {k:"pose",ic:"🛠️",t:"Poses à venir",types:["pose"],jusqua:in7},
+    {k:"fact",ic:"🧾",t:"Facturer",types:["facture"]},
+    {k:"argent",ic:"💶",t:"Récupérer l'argent",types:["relance-aide"],jusqua:t0},
+    {k:"payer",ic:"🏭",t:"Payer (fournisseurs, commissions)",types:["fournisseur","commission"],jusqua:in7},
+    {k:"suivi",ic:"🔁",t:"Relances suivi long terme",types:["suivi"],jusqua:t0},
+  ];
+  const cartes={};
+  for(const c of COLS){ if(!c.types) continue; cartes[c.k]=T.filter(x=>c.types.includes(x.type) && (!c.jusqua || !x.date || x.date<=c.jusqua)).map(x=>({d:x.d,txt:x.txt,ic:x.ic,date:x.date})); }
+  // Devis : à relancer si envoyé / relancé il y a 3 jours ou plus
+  cartes.devis=live.filter(d=>Number(d.etape)===4 && d.statutDevis!=="Refusé").map(d=>{ const last=d.dateRelanceDevis||d.dateEnvoiDevis; const nb=Number(d.nbRelancesDevis)||0; return {d,txt:(nb?"Relance n°"+(nb+1):"Relancer le devis")+(d.devisTTC?" · "+eur(d.devisTTC):""),ic:"📄",date:last?addJ(last,3):""}; }).filter(x=>!x.date||x.date<=t0);
+  // Argent dû par des clients (RAC / comptant)
+  live.filter(d=>racDu(d)>0 && Number(d.etape)>=8).forEach(d=>cartes.argent.push({d,txt:"Client doit "+eur(racDu(d)),ic:"💳",date:""}));
+  // Bloquants : alertes rouges
+  cartes.urgent=[]; for(const d of live) for(const a of alertsFor(d)) if(a.lvl==="danger") cartes.urgent.push({d,txt:a.t,ic:"⚠️",date:""});
+  const rang=x=>!x.date?2:(x.date<t0?0:(x.date===t0?1:3));
+  for(const k in cartes) cartes[k].sort((a,b)=>rang(a)-rang(b) || (a.date||"").localeCompare(b.date||"") || (b.d.createdAt||0)-(a.d.createdAt||0));
+  const goBtn=d=>{ const e=Number(d.etape); const a=(ACTIONS_ETAPE[e]||[]).find(x=>x[2]==="go"); const B=(v,l,c)=>`<button data-mact="qtri" data-id="${esc(d.id)}" data-v="${v}" class="${c||""}">${l}</button>`;
+    return (a?B(a[0],a[1],"go"):"")+(e===4?B("relance","📣 Relancé"):"")+((e===1||e===2)?B("nrp","🔕 NRP"+(Number(d.nbNRP)?" ("+d.nbNRP+")":"")):""); };
+  const card=x=>{ const r=rang(x); const quand=!x.date?"":(r===0?`<span class="pdate late">en retard · ${fmtDate(x.date)}</span>`:(r===1?`<span class="pdate today">aujourd'hui</span>`:`<span class="pdate">${fmtDate(x.date)}</span>`));
+    return `<div class="pcard ${r===0?"late":(r===1?"today":"")}" data-open="${esc(x.d.id)}"><div class="pt"><b>${esc(fullName(x.d))}</b>${quand}</div><div class="ps">${x.ic} ${esc(x.txt)}${x.d.ville||x.d.cp?" · "+esc(x.d.ville||x.d.cp):""}</div><div class="qtri pact">${x.d.tel?`<a class="ptel" href="tel:${esc(String(x.d.tel).replace(/[^\d+]/g,""))}" data-stop="1">📞 ${esc(x.d.tel)}</a>`:""}${goBtn(x.d)}</div></div>`; };
+  const cols=COLS.filter(c=>(cartes[c.k]||[]).length);
+  const nbRetard=Object.values(cartes).flat().filter(x=>rang(x)===0).length, nbJour=Object.values(cartes).flat().filter(x=>rang(x)===1).length;
   return `
-  <div class="grid kpis">
-    <div class="card kpi" data-nav="pipeline" data-filter="trier"><div class="v">${aTrier}</div><div class="l">Fiches à trier</div></div>
-    <div class="card kpi" data-nav="pipeline" data-filter="leads"><div class="v">${leads}</div><div class="l">Leads à rappeler</div></div>
-    <div class="card kpi" data-nav="pipeline" data-filter="devis"><div class="v">${nbDevis}</div><div class="l">Devis envoyés · à relancer</div></div>
-    <div class="card kpi" data-nav="pipeline" data-filter="encours"><div class="v">${enCours}</div><div class="l">En cours · priorités</div></div>
-    <div class="card kpi" data-nav="planning"><div class="v">${tDues}</div><div class="l">Tâches du jour / en retard</div></div>
-    <div class="card kpi" data-nav="planning"><div class="v">${in7}</div><div class="l">Poses sous 7 jours</div></div>
-    <div class="card kpi" data-nav="pipeline" data-filter="encaisser"><div class="v money">${eur(aEnc)}</div><div class="l">Reste à encaisser<br><span class="small">${eur(demande)} demandés · ${eur(aFacturer)} à facturer</span></div></div>
-  </div>
-  <h2>À faire <span class="muted small">(${alerts.length+(sansMail.length?1:0)})</span></h2>
-  <div class="list">${sansMail.length?`<div class="alert" data-nav="reglages"><span class="ic">✎</span><div class="grow"><b>Rappel</b> — renseigner l'e-mail de commande de ${esc(sansMail.join(", "))}<div class="small muted">Réglages → Fournisseurs</div></div></div>`:""}${alerts.length?alerts.slice(0,40).map(({d,a})=>`
-    <div class="alert ${a.lvl==="danger"?"danger":""}" data-open="${esc(d.id)}"><span class="ic">${a.lvl==="danger"?"!":"•"}</span><div class="grow"><b>${esc(fullName(d))}</b> — ${esc(a.t)}<div class="small muted">${esc(etapeLabel(d.etape))}${d.ville?" · "+esc(d.ville):""}</div></div></div>`).join(""):'<div class="card empty">Rien d\'urgent. 👌</div>'}
-  </div>
-  ${all.filter(d=>d.aVerifier).length?`<div class="card row" style="margin-top:10px"><div class="grow small"><b>${aTrier} fiches à trier</b> (Effy, Hello Artisan, anciens Sheets) — décide pour chacune : à rappeler, suivi long terme ou perdu.</div><button class="btn" data-nav="pipeline" data-filter="trier">Trier</button></div>`:""}
-  <h2>Derniers leads</h2>
-  <div class="list">${all.filter(d=>Number(d.etape)===1).sort((a,b)=>b.createdAt-a.createdAt).slice(0,8).map(itemRow).join("")||'<div class="card empty">Aucun nouveau lead.</div>'}</div>
+  <div class="dhead"><div><h2 style="margin:0">Nos priorités</h2><div class="small muted">${nbRetard?`<b class="neg">${nbRetard} en retard</b> · `:""}${nbJour} pour aujourd'hui · une colonne = un type de tâche · le <b class="vert">bouton vert</b> fait avancer le client</div></div>
+    <div class="dkpi"><button class="card kpi mini" data-nav="pipeline" data-filter="encaisser"><div class="v money">${eur(aEnc)}</div><div class="l">à encaisser</div></button></div></div>
+  ${aTrier?`<div class="alert" data-nav="pipeline" data-filter="trier"><span class="ic">🧺</span><div class="grow"><b>${aTrier} fiche${aTrier>1?"s":""} à trier</b> — clique pour les ranger</div></div>`:""}
+  ${sansMail.length?`<div class="alert" data-nav="reglages"><span class="ic">✎</span><div class="grow">Renseigner l'e-mail de commande de ${esc(sansMail.join(", "))} <span class="small muted">(Réglages → Fournisseurs)</span></div></div>`:""}
+  <div class="prio">${cols.map(c=>{ const L=cartes[c.k]; const late=L.filter(x=>rang(x)===0).length; const max=c.max||20;
+    return `<section class="pcol ${c.c||""}"><header><span class="pic">${c.ic}</span><span class="ptitle">${esc(c.t)}</span><b class="pn">${L.length}</b>${late?`<b class="pn late">${late} ⏰</b>`:""}</header><div class="pcards">${L.slice(0,max).map(card).join("")}${L.length>max?`<button class="pmore" data-nav="planning">+ ${L.length-max} autres dans le Planning</button>`:""}</div></section>`; }).join("") || '<div class="card empty">Rien à faire pour l\'instant. 👌</div>'}</div>
   <button class="fab" data-act="new" aria-label="Nouveau dossier">+</button>`;
 }
 
