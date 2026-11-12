@@ -104,7 +104,7 @@ function doPost(e) {
     if (req.action === 'leadDimensionnement') return json(actionLeadDim(req));
     var who = authenticate(req.auth || {});
     switch (req.action) {
-      case 'login': return json({role: who.role, poseur: who.poseur});
+      case 'login': return json({role: who.role, poseur: who.poseur, regie: who.regie});
       case 'pull': return json(actionPull(who, Number(req.since) || 0));
       case 'push': return json(actionPush(who, req.records || []));
       case 'upload': return json(actionUpload(who, req));
@@ -123,6 +123,12 @@ function doPost(e) {
 function authenticate(a) {
   var c = getConfig();
   if (a.token && a.token === c.ADMIN_TOKEN) return {role: 'admin'};
+  if (a.regie && a.pin) {
+    var rk = Object.keys(c).filter(function (k) { return k.indexOf('REGIE_') === 0 && keyNom(k.slice(6)) === keyNom(a.regie); })[0];
+    if (rk && String(c[rk]).trim() === String(a.pin).trim()) return {role: 'regie', regie: rk.slice(6)};
+    Utilities.sleep(800);
+    throw new Error('Nom de régie ou PIN incorrect');
+  }
   if (a.poseur && a.pin) {
     var key = Object.keys(c).filter(function (k) { return k.indexOf('POSEUR_') === 0 && k.slice(7).toLowerCase() === String(a.poseur).trim().toLowerCase(); })[0];
     if (key && String(c[key]).trim() === String(a.pin).trim()) return {role: 'poseur', poseur: key.slice(7)};
@@ -137,7 +143,11 @@ function actionPull(who, since) {
   var all = readAll();
   var out = [], ids = [];
   all.forEach(function (r) {
-    if (who.role === 'poseur') {
+    if (who.role === 'regie') {
+      if (!visibleForRegie(r.data, who.regie)) return;
+      ids.push(r.data.id);
+      if (r.serverTs > since) out.push(stripForRegie(r.data));
+    } else if (who.role === 'poseur') {
       if (!visibleForPoseur(r.data, who.poseur)) return;
       ids.push(r.data.id);
       if (r.serverTs > since) out.push(stripForPoseur(r.data));
@@ -146,7 +156,7 @@ function actionPull(who, since) {
     }
   });
   var res = {now: Date.now(), records: out};
-  if (who.role === 'poseur') { res.full = true; res.ids = ids; }
+  if (who.role === 'poseur' || who.role === 'regie') { res.full = true; res.ids = ids; }
   return res;
 }
 
@@ -159,7 +169,28 @@ function actionPush(who, records) {
       if (Number(inc.pv) !== PV) migrerV2(inc); // appli pas encore à jour : on traduit les étapes
       var row = index[inc.id]; var stored = row ? JSON.parse(sh.getRange(row, COLS.length).getValue()) : null;
       var merged;
-      if (who.role === 'poseur') {
+      if (who.role === 'regie') {
+        if (stored) {
+          if (!visibleForRegie(stored, who.regie)) return;
+          merged = JSON.parse(JSON.stringify(stored));
+          merged.commentairesRegie = mergeComments(stored.commentairesRegie, inc.commentairesRegie);
+          if (JSON.stringify(merged.commentairesRegie) === JSON.stringify(stored.commentairesRegie || [])) { returned.push(stripForRegie(stored)); return; }
+          merged.updatedAt = Date.now();
+          var lastC = merged.commentairesRegie[merged.commentairesRegie.length - 1];
+          notifyAdmin('💬 Message de ' + who.regie + ' : ' + nomComplet(merged), lastC ? lastC.txt : '');
+        } else {
+          var tel9 = normTel(inc.tel).slice(-9);
+          var dup = tel9 && readAll().filter(function (r) { return !r.data._deleted && normTel(r.data.tel).slice(-9) === tel9; })[0];
+          merged = newDossier();
+          REGIE_CREATE.forEach(function (k) { if (inc[k] !== undefined) merged[k] = clean(inc[k]); });
+          merged.id = inc.id; merged.etape = 1; merged.source = 'Régie'; merged.regie = who.regie; merged.pv = PV;
+          merged.createdAt = Date.now(); merged.updatedAt = Date.now(); merged.historique = [{t: Date.now(), etape: 1, pv: PV}];
+          merged.commentairesRegie = mergeComments([], inc.commentairesRegie);
+          merged.demandeRappel = 'Envoyé par la régie ' + who.regie + ' le ' + Utilities.formatDate(new Date(), 'Europe/Paris', 'dd/MM/yyyy');
+          if (dup) { merged.aVerifier = true; merged.notes = '⚠️ Doublon possible : même téléphone que « ' + nomComplet(dup.data) + ' » (déjà dans le CRM, source ' + (dup.data.source || '?') + ').'; }
+          notifyAdmin('📥 Nouveau client de la régie ' + who.regie + ' : ' + nomComplet(merged), 'Tél : ' + (merged.tel || '') + ' · ' + (merged.cp || '') + ' ' + (merged.ville || '') + ' · ' + (merged.produit || '') + (dup ? '\n⚠️ Doublon possible avec ' + nomComplet(dup.data) : ''));
+        }
+      } else if (who.role === 'poseur') {
         if (!stored || !visibleForPoseur(stored, who.poseur)) return;
         merged = JSON.parse(JSON.stringify(stored));
         POSEUR_WRITABLE.forEach(function (k) { if (inc[k] !== undefined) merged[k] = inc[k]; });
@@ -169,19 +200,20 @@ function actionPush(who, records) {
         merged.updatedAt = Math.max(Number(inc.updatedAt) || 0, Number(stored.updatedAt) || 0);
       } else {
         if (stored && Number(stored.updatedAt) > Number(inc.updatedAt)) {
-          merged = stored; merged.photos = mergePhotos(stored.photos, inc.photos);
+          merged = stored; merged.photos = mergePhotos(stored.photos, inc.photos); merged.commentairesRegie = mergeComments(stored.commentairesRegie, inc.commentairesRegie);
         } else {
           merged = inc;
           if (stored) {
             merged.photos = mergePhotos(stored.photos, inc.photos);
             if (stored.satisfaction && !inc.satisfaction) merged.satisfaction = stored.satisfaction;
             if (stored.notesPoseur && !inc.notesPoseur) merged.notesPoseur = stored.notesPoseur;
+            if (stored.commentairesRegie) merged.commentairesRegie = mergeComments(stored.commentairesRegie, inc.commentairesRegie);
           }
         }
       }
       writeRecord(sh, index, merged);
-      returned.push(who.role === 'poseur' ? stripForPoseur(merged) : merged);
-      if (who.role === 'poseur' && Number(merged.etape) === 8 && Number(stored.etape) < 8) notifyAdmin('✅ Chantier terminé : ' + nomComplet(merged), who.poseur + ' a déclaré le chantier de ' + nomComplet(merged) + ' terminé.\nPhotos après : ' + countPhotos(merged, 'apres') + '\nSatisfaction : ' + (merged.satisfaction && merged.satisfaction.note ? merged.satisfaction.note + '/5' : 'non remplie'));
+      returned.push(who.role === 'poseur' ? stripForPoseur(merged) : who.role === 'regie' ? stripForRegie(merged) : merged);
+      if (who.role === 'poseur' && stored && Number(merged.etape) === 8 && Number(stored.etape) < 8) notifyAdmin('✅ Chantier terminé : ' + nomComplet(merged), who.poseur + ' a déclaré le chantier de ' + nomComplet(merged) + ' terminé.\nPhotos après : ' + countPhotos(merged, 'apres') + '\nSatisfaction : ' + (merged.satisfaction && merged.satisfaction.note ? merged.satisfaction.note + '/5' : 'non remplie'));
     });
     return {records: returned};
   } finally { lock.releaseLock(); }
@@ -189,6 +221,7 @@ function actionPush(who, records) {
 
 function actionUpload(who, req) {
   var folder = DriveApp.getFolderById(PropertiesService.getScriptProperties().getProperty('PHOTOS_ID'));
+  if (who.role === 'regie') throw new Error('Non autorisé');
   var d = findRecord(req.dossierId);
   if (who.role === 'poseur' && (!d || !visibleForPoseur(d, who.poseur))) throw new Error('Chantier non autorisé');
   var sub = clientFolder(folder, d ? nomComplet(d) + ' — ' + (d.ville || d.cp || '') : 'Divers');
@@ -203,6 +236,7 @@ function actionUpload(who, req) {
 }
 
 function actionFile(who, id) {
+  if (who.role === 'regie') throw new Error('Non autorisé');
   var f = DriveApp.getFileById(id);
   var root = PropertiesService.getScriptProperties().getProperty('PHOTOS_ID');
   var p = f.getParents(); var ok = false;
@@ -541,6 +575,20 @@ function visibleForPoseur(d, poseur) {
   if (e >= 8 && e <= 11) { var since = joursDepuis(d.dateInstallation || d.datePose); return since === null || since <= 30; }
   return false;
 }
+/* ----- Régies : chacune ne voit que ses clients, sans les montants (sauf sa commission) ----- */
+var REGIE_FIELDS = ['id', 'nom', 'prenom', 'tel', 'email', 'adresse', 'cp', 'ville', 'produit', 'etape', 'createdAt', 'updatedAt', 'source', 'regie', 'pv', 'historique',
+  'statutDevis', 'dateEnvoiDevis', 'dateSignatureDevis', 'datePose', 'dateInstallation', 'motifKO', 'commission', 'commissionPayeeLe', 'commentairesRegie', 'chauffage', 'surface', 'proprietaire', '_deleted'];
+var REGIE_CREATE = ['nom', 'prenom', 'tel', 'email', 'adresse', 'cp', 'ville', 'produit', 'chauffage', 'surface', 'proprietaire'];
+function visibleForRegie(d, regie) {
+  if (!d || d._deleted) return false;
+  var k = keyNom(regie); if (!k) return false;
+  return keyNom(d.regie) === k || keyNom(d.source) === k;
+}
+function stripForRegie(d) { var o = {}; REGIE_FIELDS.forEach(function (k) { if (d[k] !== undefined) o[k] = d[k]; }); return o; }
+function mergeComments(a, b) {
+  var m = {}; (a || []).concat(b || []).forEach(function (c) { if (!c || !c.t || !c.txt) return; m[c.t + '|' + String(c.txt).slice(0, 40)] = {t: Number(c.t), by: clean(c.by), txt: String(c.txt).slice(0, 2000)}; });
+  return Object.keys(m).map(function (k) { return m[k]; }).sort(function (x, y) { return x.t - y.t; });
+}
 function stripForPoseur(d) { var o = {}; POSEUR_FIELDS.forEach(function (k) { if (d[k] !== undefined) o[k] = d[k]; }); return o; }
 function mergePhotos(a, b) {
   var m = {}; (a || []).concat(b || []).forEach(function (p) { if (!p || !p.id) return; var o = m[p.id] || {}; Object.keys(p).forEach(function (k) { if (p[k] !== undefined && p[k] !== '' && !(k === 'pending' && o.fileId)) o[k] = p[k]; }); if (o.fileId) o.pending = false; m[p.id] = o; });
@@ -775,15 +823,171 @@ function envoyerRelanceDevis() {
   return n;
 }
 
-/* majQhare20261109b : fonction ponctuelle exécutée, retirée de la copie publique (données clients). */
+/* Mise à jour du 9/11/2026 : relevé Qhare / portail mandataire MPR + réponses de Sassi. Lancer une fois. */
+function majQhare20261109() {
+  var A = '⚠️ ', N = '[Relevé Qhare 09/11] ';
+  var U = {
+    'mw54y4x2xwkpmg': {etape: 8, refMPR: 'MPR-2026-139541', valoMPR: '5000', statutMPR: 'Octroyé', dateDepotMPR: '2026-07-29', note: 'Posé. Subvention MPR 5 000 € accordée, demande de solde PAS déposée. ' + A + 'Facture FA855260727-1 datée du 27/07 = avant le devis (29/07) et avant le dépôt MPR (29/07) : dates confirmées réelles par Sassi → ne pas déposer le solde tel quel, avis à prendre (risque de refus / contrôle).'},
+    'mw54y4x2c3fupd': {etape: 8, nom: 'Karbal', prenom: 'Hicham', refMPR: 'MPR-2026-158514', valoMPR: '5000', statutMPR: 'Octroyé', dateDepotMPR: '2026-09-14', note: 'Posé. Subvention MPR 5 000 € accordée, solde à déposer. Facture FA855260911-2 (devis 04/09, facture 11/09) OK. ' + A + 'Reste à charge 1 600 € non payé : offert contre encart pub (Partenaire Vitrine) → la remise doit figurer sur la facture et les aides sont plafonnées (écrêtement) : à régler avant le dépôt du solde.'},
+    'mw54y4x2etxe46': {etape: 8, refMPR: 'MPR-2026-163369', valoMPR: '4500', statutMPR: 'Octroyé', dateDepotMPR: '2026-09-23', note: 'Posé. Subvention MPR 4 500 € accordée, demande de solde PAS déposée. ' + A + 'Facture FA855260914-1 du 14/09 = avant le devis (23/09) et avant le dépôt MPR (23/09) : dates réelles → ne pas déposer tel quel, avis à prendre.'},
+    'mw54y6zhac8vn7': {etape: 8, refMPR: 'MPR-2026-165821', valoMPR: '5000', statutMPR: 'Octroyé', dateDepotMPR: '2026-09-28', note: 'Posé. Subvention MPR 5 000 € accordée, solde à déposer. Facture PAC FA855260918-1 (devis 15/09, facture 18/09) OK + facture 500 € FA855261007-1 à clarifier. ' + A + 'Reste à charge 1 600 € offert contre encart pub (Partenaire Vitrine) : remise à faire figurer sur la facture, aides plafonnées.'},
+    'mw54y4x2sg5zo3': {etape: 8, note: 'Doublon de « Wasseh Habibi Adam » (dossier principal).'},
+    'mw57ma753swnfa': {etape: 8, refMPR: 'MPR-2026-168463', valoMPR: '5000', statutMPR: 'Octroyé', dateDepotMPR: '2026-10-03', note: 'Posé. Subvention MPR 5 000 € accordée (Botros / Drevenakova), solde à déposer. Facture FA855260923-1 (devis 17/09, facture 23/09) OK. ' + A + 'Reste à charge 1 600 € offert contre encart pub (Partenaire Vitrine) : remise à faire figurer sur la facture, aides plafonnées.'},
+    'mw54y4x2jlvac4': {etape: 8, note: 'Doublon de « BOTROS MAGDY » (dossier principal avec devis et MPR).'},
+    'mw54y5ofu5660i': {note: 'Co-titulaire du dossier BOTROS MAGDY (MPR-2026-168463).'},
+    'mw54y4x2vbt0fw': {etape: 8, refMPR: 'MPR-2026-170254', valoMPR: '5000', statutMPR: 'Octroyé', dateDepotMPR: '2026-10-07', note: 'Posé. Subvention MPR 5 000 € accordée, demande de solde PAS déposée. ' + A + 'Facture FA855260925-1 du 25/09 = avant le devis (07/10) et avant le dépôt MPR (07/10) : dates réelles → ne pas déposer tel quel, avis à prendre.'},
+    'mw54y6zhf0ow0w': {etape: 8, note: 'Doublon probable de « Danelutti » (Christian Gérard, Val-de-Virieu) : dossier principal = Danelutti.'},
+    'mw54y4x2rq9061': {etape: 8, refMPR: 'MPR-2026-170303', valoMPR: '5000', statutMPR: 'Octroyé', dateDepotMPR: '2026-10-07', note: 'Posé. Subvention MPR 5 000 € accordée, demande de solde PAS déposée. ' + A + 'Facture FA855260722-2 du 22/07 = avant le devis (07/10) et avant le dépôt MPR (07/10) : dates réelles → ne pas déposer tel quel, avis à prendre.'},
+    'mw54y4x3qr20c9': {etape: 5, refMPR: 'MPR-2026-171868', valoMPR: '3000', statutMPR: 'Octroyé', dateDepotMPR: '2026-10-09', note: 'PAS ENCORE POSÉ (normal, confirmé par Sassi). Subvention MPR 3 000 € accordée. ' + A + 'Qhare : date d\'émission de facture manquante sur le devis → à corriger avant la demande de solde.'},
+    'mw54y4x3pvg8ot': {etape: 8, refMPR: 'MPR-2026-175994', valoMPR: '5000', statutMPR: 'Octroyé', dateDepotMPR: '2026-10-16', note: 'Posé (confirmé par Sassi). Subvention MPR 5 000 € accordée, solde à déposer. ' + A + 'Facture FA855261016-1 datée du 16/10 = même jour que le dépôt MPR : vérifier que la pose a bien eu lieu APRÈS le dépôt. Encore en « Lead » dans Qhare : mettre à jour.'},
+    'mw57ma798vpkp9': {etape: 8, refMPR: 'MPR-2026-178368', valoMPR: '4000', statutMPR: 'Octroyé', dateDepotMPR: '2026-10-20', note: 'Posé (confirmé par Sassi). Subvention MPR 4 000 € accordée, solde à déposer. ' + A + 'Pas de facture dans Qhare : facture à établir (date postérieure au dépôt MPR du 20/10 et à la pose).'},
+    'mw54y4x28s30u3': {etape: 8, refMPR: 'MPR-2026-121370', valoMPR: '4800', statutMPR: 'Paiement demandé', note: 'Solde MPR confirmé par l\'Anah : 4 800 € à payer, rien à faire.'},
+    'mw54y4x2ybkcez': {etape: 8, refMPR: 'MPR-2026-87704', valoMPR: '6200', statutMPR: 'Paiement demandé', note: 'Solde MPR confirmé par l\'Anah : 6 200 € à payer, rien à faire.'},
+    'mw54y4x1xco7cy': {etape: 8, refMPR: 'MPR-2026-113564', valoMPR: '5000', statutMPR: 'Paiement demandé', note: 'Solde MPR confirmé par l\'Anah : 5 000 € à payer, rien à faire.'},
+    'mw54y4x21gkoje': {etape: 8, refMPR: 'MPR-2026-127536', valoMPR: '4000', statutMPR: 'Paiement demandé', note: 'Solde MPR confirmé par l\'Anah : 4 000 € à payer, rien à faire.'},
+    'mw54y4x1c2mole': {etape: 8, refMPR: 'MPR-2026-132088', valoMPR: '5000', statutMPR: 'Paiement demandé', note: 'Solde MPR confirmé par l\'Anah : 5 000 € à payer, rien à faire.'},
+    'mw54y4x2kdaomh': {etape: 8, refMPR: 'MPR-2026-139210', valoMPR: '6200', statutMPR: 'Paiement demandé', note: 'Solde MPR confirmé par l\'Anah : 6 200 € à payer, rien à faire.'},
+    'mw54y5oen2wuh8': {etape: 8, refMPR: 'MPR-2025-401909', valoMPR: '12500', statutMPR: 'Paiement demandé', note: 'Solde MPR 12 500 € déposé (dossier MEBAREK / BOUKHALFA), en instruction à l\'Anah : à surveiller.'}
+  };
+  var sh = dbSheet(); var index = indexRows(sh); var n = 0, manquants = [];
+  var byId = {}; readAll().forEach(function (r) { byId[r.data.id] = r.data; });
+  Object.keys(U).forEach(function (id) {
+    var d = byId[id]; if (!d) { manquants.push(id); return; }
+    var u = U[id];
+    ['etape', 'nom', 'prenom', 'refMPR', 'valoMPR', 'statutMPR', 'dateDepotMPR'].forEach(function (k) { if (u[k] !== undefined) d[k] = u[k]; });
+    if (u.etape !== undefined) (d.historique = d.historique || []).push({t: Date.now(), etape: u.etape});
+    d.notes = ((d.notes || '') + '\n' + N + u.note).trim();
+    if (/⚠️/.test(u.note)) d.alerteConformite = true;
+    d.updatedAt = Date.now(); writeRecord(sh, index, d); n++;
+  });
+  Logger.log(n + ' dossiers mis à jour' + (manquants.length ? ' — introuvables : ' + manquants.join(', ') : ''));
+  return n;
+}
 
-/* triDrive20261109 : fonction ponctuelle exécutée, retirée de la copie publique (données clients). */
+function majQhare20261109b() {
+  var sh = dbSheet(); var index = indexRows(sh); var byId = {}; readAll().forEach(function (r) { byId[r.data.id] = r.data; });
+  var b = byId['mw57ma798vpkp9']; if (b) { b.etape = 6; b.datePose = '2026-11-14'; (b.historique = b.historique || []).push({t: Date.now(), etape: 6}); b.notes = (b.notes || '') + '\n[09/11] Correction Sassi : PAS ENCORE POSÉ. Pose reportée au samedi 14/11 faute de matériel. Facture à établir après la pose.'; b.updatedAt = Date.now(); writeRecord(sh, index, b); }
+  var m = byId['mw54y4x3pvg8ot']; if (m) { m.notes = (m.notes || '') + '\n[09/11] Sassi confirme : pose APRÈS le dépôt MPR du 16/10. Facture à dater au jour de fin de pose (pas le 16/10) avant dépôt du solde.'; m.updatedAt = Date.now(); writeRecord(sh, index, m); }
+  Logger.log('ok ' + !!b + ' ' + !!m);
+}
 
-/* decisionsTri20261109 : fonction ponctuelle exécutée, retirée de la copie publique (données clients). */
+/* Tri des Google Sheets (call maroc mabrour pac, igor install, Suivi clients) vs CRM — 9/11/2026.
+   Règle : doublon = même personne + même adresse + même chantier. Rien n'est supprimé ni déplacé :
+   chaque cas passe dans la file « À vérifier » avec une note. Sassi valide, puis on applique. */
+function triDrive20261109() {
+  var T = '[Tri Drive 09/11] ';
+  var U = {
+    // Doublons proposés
+    'mw54y4x2pnal4c': 'DOUBLON PROPOSÉ de « Boukhalfa » (fiche MPR 12 500 €). Même chantier ITE 18 rue du Havre Béthune. Si OK → fusion (date de pose 25/07 recopiée) puis Perdu.',
+    'mw54y4x21odhvp': 'DOUBLON PROPOSÉ de « Boukhalfa ». Attention : marge -2 500 € (poseur Stella) = coût à reporter sur la fiche principale avant fusion.',
+    'mw54y5oen2wuh8': 'FICHE PRINCIPALE Boukhalfa (MPR-2025-401909). ⚠️ « Capelle Valerie » = même adresse/tél mais AUTRE chantier (PAC CEE) → on garde les 2. « Kostov » = tél du pro mis par le call → sans lien.',
+    'mw54y5oexc74qx': 'DOUBLON PROPOSÉ de « Mohamed Malki » (9 rue des Pâquerettes, Le Blanc-Mesnil). Si OK → Perdu.',
+    'mw54y4x2goddpn': 'FICHE PRINCIPALE Malki. NB : nom/prénom inversés (nom = Malki, prénom = Mohamed).',
+    'mw54y5ofvavsb6': 'DOUBLON PROPOSÉ de « Ayoub Marchiche » (Clermont-Ferrand). Si OK → Perdu.',
+    'mw54y4x2cclnuy': 'FICHE PRINCIPALE Marchiche. NB : nom/prénom inversés (nom = Marchiche, prénom = Ayoub).',
+    'mw54y5of9rtngf': 'DOUBLON PROPOSÉ de « De Oliveira Amina » (Vernouillet). Si OK → Perdu.',
+    'mw57ma72wyfmys': 'DOUBLON PROPOSÉ de « Dejeddi Ourabah » (17 rue Charles Derenne, Villeneuve-sur-Lot). Tél différent (770… vs 767…) : vérifier le bon numéro. Si OK → Perdu.',
+    'mw54y4x2sg5zo3': 'DOUBLON PROPOSÉ de « Wasseh Habibi Adam » (Morangis). Si OK → Perdu.',
+    'mw54y4x2jlvac4': 'DOUBLON PROPOSÉ de « BOTROS MAGDY » (Créteil). Drevencova = co-titulaire, même chantier. Si OK → Perdu.',
+    'mw54y6zhf0ow0w': 'DOUBLON PROPOSÉ de « Danelutti » (Val-de-Virieu) — relevé Qhare. À confirmer : Christian Gérard = Danelutti ?',
+    // Cas à trancher par Sassi
+    'mw54y4x04szr1d': 'À TRANCHER : 2 fiches « Santos ». Celle-ci a une marge -2 998 € (poseur Stella) = coût du même chantier ou autre chantier ?',
+    'mw54y4x0afioa2': 'À TRANCHER : 2 fiches « Santos » (voir l\'autre, marge -2 998 €).',
+    'mw54y4x18999ye': 'À TRANCHER : « De Brosse » (soldé) = même client que « TANGUY DE BROSSE » (Saint-Cyr-l\'École, installé) ? Même chantier ou 2 chantiers ?',
+    'mw54y4x18uicfn': 'À TRANCHER : « Didier » (soldé) = « DIDIER Marcel » (Viry-Châtillon, installé) ? « DIDIER Cristophe » (même ville, parrainage) est une autre personne.',
+    'mw54y4x32h8tv6': 'À TRANCHER : Farid Bennadi a 2 chantiers (fichier Igor) : Vouziers 15 rue de Tabure (SCI) et Buzancy 10 rue Professeur Gilbert (locataire). Cette fiche = lequel ?',
+    'mw54y6f48255p6': 'Chantier Farid Bennadi — VOUZIERS (15 rue de Tabure, SCI). L\'autre chantier = Buzancy (locataire).',
+    'mw54y5ofkbite5': 'DOUBLON PROPOSÉ : « Farid » sans infos (Suivi clients) = Farid Bennadi. Si OK → Perdu.',
+    'mw54y4x1kf3067': 'PAS UN DOUBLON (proposé) : « Cailleux/ssc » = 2e chantier (SSC) du même client que « Cailleux ». On garde les 2.',
+    'mw54y6zdcqfgrm': 'PAS UN DOUBLON : même tél que Diouane mais autre personne/adresse (Noyelles-sous-Lens). On garde.',
+    // Fiches test / incomplètes
+    'mw77mpcc2kvi3f': 'TEST du formulaire du site (sassi ilan). Si OK → Perdu.',
+    'mw89a3tg8ik8wf': 'TEST du formulaire du site (Mmm Margot). Si OK → Perdu.',
+    'mw9732ipwuiy0y': 'TEST du formulaire du site (CONSULTING ROY). Si OK → Perdu.',
+    'mw57ma5hsksgl1': 'INCOMPLET : « Koreak grill bar » (pro, Levallois) — téléphone faux (101010102). À compléter ou Perdu.',
+    'mw57ma6f2wbp8d': 'INCOMPLET : adresse saisie à la place du nom (101 av. Saint-Mandé, Paris 12e). Nom du client à compléter.'
+  };
+  var sh = dbSheet(); var index = indexRows(sh); var byId = {}; readAll().forEach(function (r) { byId[r.data.id] = r.data; });
+  var n = 0, manquants = [];
+  Object.keys(U).forEach(function (id) {
+    var d = byId[id]; if (!d) { manquants.push(id); return; }
+    d.notes = ((d.notes || '') + '\n' + T + U[id]).trim(); d.aVerifier = true; d.updatedAt = Date.now(); writeRecord(sh, index, d); n++;
+  });
+  // Chantier manquant : Diouane n°2 (Harnes), présent dans « call maroc mabrour pac », absent du CRM
+  var deja = Object.keys(byId).some(function (k) { var d = byId[k]; return /diouane/i.test(d.nom || '') && /harnes|62440/i.test((d.ville || '') + ' ' + (d.cp || '') + ' ' + (d.adresse || '')); });
+  if (!deja) {
+    var x = newDossier(); x.source = 'Call Maroc'; x.nom = 'Diouane'; x.prenom = 'Mohamed'; x.tel = '627664541';
+    x.adresse = '7B rue du Petit Moulin'; x.cp = '62440'; x.ville = 'Harnes'; x.couleur = 'bleu'; x.habitat = 'Maison individuelle';
+    x.notes = T + '2e CHANTIER de M. Diouane (le 1er = 102 rue Victor Mathé, Hénin-Beaumont). 80 m², 5 radiateurs, Wolf 8-10. Source : fichier call maroc. À valider.';
+    x.aVerifier = true; writeRecord(sh, index, x); n++;
+  }
+  Logger.log(n + ' fiches dans « À vérifier »' + (manquants.length ? ' — introuvables : ' + manquants.join(', ') : ''));
+  return n;
+}
 
-/* fusionDoublons20261109 : fonction ponctuelle exécutée, retirée de la copie publique (données clients). */
+/* Réponses de Sassi au tri Drive — 9/11/2026 22:56 */
+function decisionsTri20261109() {
+  var T = '[Décision Sassi 09/11] ';
+  var U = {
+    'mw54y4x0afioa2': {note: '2 CHANTIERS « Santos » confirmés : pas un doublon. On garde les 2.', ok: true},
+    'mw54y4x04szr1d': {note: '2 CHANTIERS « Santos » confirmés : pas un doublon. On garde les 2.', ok: true},
+    'mw54y4x18999ye': {note: 'MÊME CLIENT que « TANGUY DE BROSSE » (Saint-Cyr-l\'École) → à fusionner dans cette fiche-là.', ok: false},
+    'mw57ma4w6c3s31': {note: 'FICHE PRINCIPALE De Brosse (même client que la fiche « De Brosse » soldée → fusion à faire).', ok: false},
+    'mw54y4x18uicfn': {note: 'MÊME CLIENT que « DIDIER Marcel » (Viry-Châtillon) → à fusionner dans cette fiche-là.', ok: false},
+    'mw57ma55i619dt': {note: 'FICHE PRINCIPALE Didier Marcel (même client que la fiche « Didier » soldée → fusion à faire).', ok: false},
+    'mw54y4x32h8tv6': {note: 'Farid Bennadi a PLUSIEURS MAISONS : fiche gardée comme chantier séparé (Buzancy ou autre adresse à compléter).', ok: true},
+    'mw54y6f48255p6': {note: 'Farid Bennadi — plusieurs maisons confirmées. Chantier Vouziers gardé.', ok: true}
+  };
+  var sh = dbSheet(); var index = indexRows(sh); var byId = {}; readAll().forEach(function (r) { byId[r.data.id] = r.data; });
+  var n = 0, manquants = [];
+  Object.keys(U).forEach(function (id) {
+    var d = byId[id]; if (!d) { manquants.push(id); return; }
+    d.notes = ((d.notes || '') + '\n' + T + U[id].note).trim(); d.aVerifier = !U[id].ok; d.updatedAt = Date.now(); writeRecord(sh, index, d); n++;
+  });
+  Logger.log(n + ' fiches mises à jour' + (manquants.length ? ' — introuvables : ' + manquants.join(', ') : ''));
+}
 
-/* jamaisInstalles20261109 : fonction ponctuelle exécutée, retirée de la copie publique (données clients). */
+/* Fusion des doublons validée par Sassi — 9/11/2026 23:05. Rien n'est supprimé : le doublon passe en « Perdu » (étape 0) avec la note « fusionné dans… ». */
+function fusionDoublons20261109() {
+  var T = '[Fusion 09/11] ';
+  var P = [ // [doublon, principale]
+    ['mw54y4x2pnal4c', 'mw54y5oen2wuh8'], ['mw54y4x21odhvp', 'mw54y5oen2wuh8'], ['mw54y5oexc74qx', 'mw54y4x2goddpn'],
+    ['mw54y5ofvavsb6', 'mw54y4x2cclnuy'], ['mw54y5of9rtngf', 'mw54y4x2vh3sl4'], ['mw57ma72wyfmys', 'mw54y4x20ngilg'],
+    ['mw54y4x2sg5zo3', 'mw54y6zhac8vn7'], ['mw54y4x2jlvac4', 'mw57ma753swnfa'], ['mw54y6zhf0ow0w', 'mw54y4x2vbt0fw'],
+    ['mw54y5ofkbite5', 'mw54y4x32h8tv6'], ['mw54y4x18999ye', 'mw57ma4w6c3s31'], ['mw54y4x18uicfn', 'mw57ma55i619dt']
+  ];
+  var CHAMPS = ['prenom', 'tel', 'email', 'adresse', 'cp', 'ville', 'couleur', 'habitat', 'datePose', 'poseur', 'fournisseur', 'materiel', 'refMPR', 'refOPX'];
+  var TESTS = ['mw77mpcc2kvi3f', 'mw89a3tg8ik8wf', 'mw9732ipwuiy0y'];
+  var sh = dbSheet(); var index = indexRows(sh); var byId = {}; readAll().forEach(function (r) { byId[r.data.id] = r.data; });
+  var touches = {}, n = 0, manquants = [];
+  P.forEach(function (p) {
+    var dup = byId[p[0]], main = byId[p[1]]; if (!dup || !main) { manquants.push(p.join('>')); return; }
+    var copies = [];
+    CHAMPS.forEach(function (k) { if ((main[k] == null || main[k] === '') && dup[k] != null && dup[k] !== '') { main[k] = dup[k]; copies.push(k); } });
+    main.notes = ((main.notes || '') + '\n' + T + 'Fiche « ' + nomComplet(dup) + ' » fusionnée ici' + (copies.length ? ' (repris : ' + copies.join(', ') + ')' : '') + '. Marge de l\'ancienne fiche : ' + (dup.margePrev != null ? dup.margePrev : '?') + ' €.').trim();
+    dup.notes = ((dup.notes || '') + '\n' + T + 'DOUBLON — fusionné dans « ' + nomComplet(main) + ' ». Fiche gardée pour l\'historique.').trim();
+    dup.etape = 0; (dup.historique = dup.historique || []).push({t: Date.now(), etape: 0}); dup.aVerifier = false; dup.updatedAt = Date.now();
+    writeRecord(sh, index, dup); touches[main.id] = main; n++;
+  });
+  var mk = byId['mw54y4x2goddpn']; if (mk) { mk.nom = 'Malki'; mk.prenom = 'Mohamed'; touches[mk.id] = mk; }
+  var mc = byId['mw54y4x2cclnuy']; if (mc) { mc.nom = 'Marchiche'; mc.prenom = 'Ayoub'; touches[mc.id] = mc; }
+  Object.keys(touches).forEach(function (id) {
+    var d = touches[id];
+    // Boukhalfa : coût -2 500 € (poseur Stella) à reporter à la main → reste « à vérifier »
+    d.aVerifier = (id === 'mw54y5oen2wuh8');
+    if (id === 'mw54y5oen2wuh8') d.notes += '\n' + T + 'À FAIRE : reporter le coût poseur Stella (-2 500 €) dans l\'onglet Chantier.';
+    d.updatedAt = Date.now(); writeRecord(sh, index, d);
+  });
+  TESTS.forEach(function (id) { var d = byId[id]; if (!d) return; d.etape = 0; (d.historique = d.historique || []).push({t: Date.now(), etape: 0}); d.aVerifier = false; d.notes = ((d.notes || '') + '\n' + T + 'Fiche TEST du formulaire → Perdu.').trim(); d.updatedAt = Date.now(); writeRecord(sh, index, d); n++; });
+  Logger.log(n + ' fiches passées en Perdu, ' + Object.keys(touches).length + ' fiches principales complétées' + (manquants.length ? ' — introuvables : ' + manquants.join(', ') : ''));
+}
+
+/* Sassi 09/11 23:47 : Koreak grill bar et '101 av. Saint-Mandé' jamais installés */
+function jamaisInstalles20261109() {
+  var sh = dbSheet(); var index = indexRows(sh); var byId = {}; readAll().forEach(function (r) { byId[r.data.id] = r.data; });
+  ['mw57ma5hsksgl1', 'mw57ma6f2wbp8d'].forEach(function (id) { var d = byId[id]; if (!d) return; d.notes = ((d.notes || '') + '\n[Décision Sassi 09/11] Jamais installé.').trim(); d.aVerifier = false; d.updatedAt = Date.now(); writeRecord(sh, index, d); });
+  Logger.log('ok');
+}
 /* ============================================================
    PIPELINE v2 — AUTOMATISATIONS (phase 2) · 10/11/2026
    Marco (accusé, NRP, devis), Paula (rappels de pose), Stella (avis), Stan (entretien) : e-mails + SMS aux clients, 1 seule fois par message.
@@ -824,14 +1028,12 @@ function prenomDe(d) { var p = String(d.prenom || '').trim(); return p ? p.charA
 /** Liste des messages dus maintenant : [{d, cle, sujet, texte, sms}] */
 function messagesDus(c) {
   var tel = c.TEL_SOCIETE || '09 72 14 91 62', agenda = c.LIEN_AGENDA || '';
-  var BOT = {accuse: 'Marco', nrp: 'Marco', devis: 'Marco', lt: 'Marco', pose: 'Paula', avis: 'Stella', entretien: 'Stan'};
-  function botDe(cle) { for (var k in BOT) if (String(cle).indexOf(k) === 0) return BOT[k]; return 'Marco'; }
-  function sigDe(bot) { return '\n\nBien cordialement,\n' + bot + ', assistant de l\'équipe Eco Roy\nROY CONSULTING — 37 av. de Saint-Mandé, 75012 Paris — ' + tel + '\n\nVous ne souhaitez plus recevoir nos messages ? Répondez « STOP ».'; }
+  var sig = '\n\nBien cordialement,\nL\'équipe Eco Roy\nROY CONSULTING — 37 av. de Saint-Mandé, 75012 Paris — ' + tel + '\n\nVous ne souhaitez plus recevoir nos messages ? Répondez « STOP ».';
   var out = [];
   readAll().forEach(function (r) {
     var d = r.data; if (d._deleted || d.oppositionContact || d.stopMails) return;
     var e = Number(d.etape), env = d.envois || {}, bj = prenomDe(d) ? 'Bonjour ' + prenomDe(d) : 'Bonjour';
-    function add(cle, sujet, texte, sms) { if (!env[cle]) out.push({d: d, cle: cle, bot: botDe(cle), sujet: sujet, texte: bj + ',\n\n' + texte + sigDe(botDe(cle)), sms: sms ? sms + ' - ' + botDe(cle) + ', Eco Roy' : sms}); }
+    function add(cle, sujet, texte, sms) { if (!env[cle]) out.push({d: d, cle: cle, sujet: sujet, texte: bj + ',\n\n' + texte + sig, sms: sms}); }
     // 01 · accusé de réception (leads arrivés depuis la mise en route)
     if (e >= 1 && e <= 2 && Number(d.createdAt) >= AUTO_START && joursDepuis(d.createdAt) <= 2)
       add('accuse', 'Eco Roy — nous avons bien reçu votre demande', 'Merci pour votre demande concernant votre projet de pompe à chaleur. Un conseiller Eco Roy vous rappelle très vite (en général dans l\'heure, du lundi au samedi).' +
