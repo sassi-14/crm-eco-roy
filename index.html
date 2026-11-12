@@ -2090,10 +2090,21 @@ function irisInit(){
 /* ---------- Démarrage ---------- */
 (async function boot(){
   const m=location.hash.match(/serveur=([^&]+)/);
-  if(m && !CFG.role){ CFG._preUrl=decodeURIComponent(m[1]); S.loginMode=/mode=regie/.test(location.hash)?"regie":"poseur"; history.replaceState(null,"",location.pathname); }
+  const lienRegie=/mode=regie/.test(location.hash);
+  if(m && !CFG.role){ CFG._preUrl=decodeURIComponent(m[1]); S.loginMode=lienRegie?"regie":"poseur"; history.replaceState(null,"",location.pathname); }
+  else if(m) history.replaceState(null,"",location.pathname);
   try{ await DB.open(); await loadAll(); }catch(e){ document.body.innerHTML='<p style="padding:20px">Stockage local indisponible sur ce navigateur (navigation privée ?).</p>'; return; }
   S.view = isPoseur()?"poseur":isRegie()?"regie":"dash";
   render();
+  /* Lien régie ouvert sur un appareil déjà connecté en gérant/poseur : on ne montre rien, on propose de passer en régie */
+  if(m && lienRegie && CFG.role && !isRegie()){
+    document.body.insertAdjacentHTML("afterbegin",'<div id="regieMask" style="position:fixed;inset:0;background:var(--bg,#fff);z-index:39"></div>');
+    const ok=await confirmBox("Ce lien est l'accès des régies. Cet appareil est déjà connecté en "+(isAdmin()?"gérant":"poseur")+". Se déconnecter pour se connecter en régie ?");
+    if(ok){ try{ if(CFG.role!=="demo") await syncNow(); }catch(_){}
+      localStorage.removeItem("ecoroy_cfg"); await DB.clear("dossiers"); await DB.clear("outbox"); await DB.clear("blobs");
+      const url=decodeURIComponent(m[1]); CFG={}; CFG._preUrl=url; S.dossiers.clear(); S.loginMode="regie"; S.view="dash"; }
+    const mk=document.getElementById("regieMask"); if(mk) mk.remove(); render();
+  }
   if(isAdmin()) irisInit();
   if(CFG.role && CFG.role!=="demo") syncNow();
   if("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(()=>{});
