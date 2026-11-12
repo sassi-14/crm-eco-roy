@@ -66,6 +66,24 @@ h3{font-size:14px;margin:0 0 8px;color:var(--muted);font-weight:600;text-transfo
 .qtri button{border:1px solid var(--line);background:var(--card);color:inherit;border-radius:8px;padding:5px 9px;font-size:12px;cursor:pointer;white-space:nowrap}
 .qtri button:hover{border-color:var(--brand)}
 .qtri button.ko{color:var(--danger)}
+.iris-fab{position:fixed;left:14px;bottom:calc(76px + env(safe-area-inset-bottom));z-index:16;display:flex;align-items:center;gap:6px;border:0;border-radius:99px;padding:10px 14px;background:var(--accent);color:#fff;font-weight:700;font-size:15px;box-shadow:0 4px 14px rgba(0,0,0,.25);cursor:pointer}
+.iris-fab span{font-size:13px}
+.iris-panel{position:fixed;left:12px;bottom:calc(132px + env(safe-area-inset-bottom));z-index:30;width:min(380px,calc(100vw - 24px));height:min(560px,calc(100vh - 200px));background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:0 10px 40px rgba(0,0,0,.3);display:flex;flex-direction:column;overflow:hidden}
+.iris-panel[hidden]{display:none!important}
+.iris-h{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid var(--line);background:var(--brand-soft)}
+.iris-x{border:0;background:none;font-size:18px;cursor:pointer;color:inherit}
+.iris-msgs{flex:1;overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:8px}
+.iris-m{max-width:92%;padding:8px 10px;border-radius:12px;font-size:14px;line-height:1.4;overflow-wrap:anywhere}
+.iris-m.iris{background:var(--brand-soft);align-self:flex-start;border-bottom-left-radius:4px}
+.iris-m.moi{background:var(--brand);color:#fff;align-self:flex-end;border-bottom-right-radius:4px}
+.iris-list{display:flex;flex-direction:column;gap:4px;margin:6px 0}
+.iris-c{display:flex;flex-direction:column;align-items:flex-start;text-align:left;border:1px solid var(--line);background:var(--card);color:inherit;border-radius:8px;padding:6px 8px;cursor:pointer;font-size:13px}
+.iris-c span{font-size:12px;opacity:.75}
+.iris-go{display:table;margin-top:8px;border:0;background:var(--brand);color:#fff;border-radius:8px;padding:6px 10px;font-size:13px;font-weight:600;cursor:pointer}
+.iris-sugg{display:flex;flex-wrap:wrap;gap:6px}
+.iris-sugg button{border:1px solid var(--line);background:var(--card);color:inherit;border-radius:99px;padding:5px 10px;font-size:12px;cursor:pointer}
+.iris-f{display:flex;gap:6px;padding:8px;border-top:1px solid var(--line)}
+.iris-f input{flex:1;min-width:0}
 .item .s{overflow-wrap:anywhere}
 .qtri button.go{background:var(--brand);border-color:var(--brand);color:#fff;font-weight:600;font-size:13px;padding:7px 12px}
 .qtri button.back{color:var(--muted,#888);border-style:dashed}
@@ -603,7 +621,7 @@ async function doLogin(){
     const j=await r.json(); if(j.error) throw new Error(j.error);
     CFG={url, role:j.role, token:auth.token, poseur:j.poseur||auth.poseur, pin:auth.pin, lastSync:0}; saveCfg();
     await DB.clear("dossiers"); await DB.clear("outbox"); await loadAll();
-    S.view = CFG.role==="poseur" ? "poseur" : "dash"; render(); syncNow();
+    S.view = CFG.role==="poseur" ? "poseur" : "dash"; render(); syncNow(); if(CFG.role!=="poseur") irisInit();
   }catch(e){ err.textContent = /Failed to fetch/.test(e.message) ? "Serveur injoignable. Vérifie l'adresse et ta connexion." : e.message; }
 }
 async function startDemo(){
@@ -1853,6 +1871,86 @@ document.addEventListener("change", e=>{ if(e.target.id==="catCat"){ CAT.cat=e.t
 window.__catImport = async function(items){ const mapped=items.map(i=>({categorie:i.cat||"Autre",marque:i.marque||"",reference:i.ref||"",operation:i.op||"",prixTTC:i.prixTTC===""?"":i.prixTTC,tva:i.tva===""?5.5:i.tva,libelle:i.libelle||i.ref||"",description:i.desc||"",actif:true}));
   let done=0; for(let k=0;k<mapped.length;k+=50){ await api("catalogueSave",{items:mapped.slice(k,k+50),replaceAll:k===0}); done+=Math.min(50,mapped.length-k); } await catLoad(true); return done; };
 
+
+/* ---------- Iris : assistante du CRM (sans IA, marche hors ligne) ---------- */
+const IRIS_SUGG=["Je fais quoi aujourd'hui ?","Devis à relancer","Poses de la semaine","Combien il reste à encaisser ?","Comment ça marche le CRM ?"];
+const nrm=s=>String(s||"").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^a-z0-9@.' -]/g," ").replace(/\s+/g," ").trim();
+const IRIS_HOW=[
+  [/(signe|signature)/,"✍️ <b>Client qui signe</b> : va dans Dossiers → onglet <b>4. Devis envoyés</b>, et clique le bouton vert <b>« Signé »</b> sur le client. Il passe en « Dossier aides ».",["pipeline","e4","Ouvrir Devis envoyés"]],
+  [/(perdu|mort|refus)/,"✖ <b>Client perdu</b> : clique <b>« Perdu »</b> sur sa ligne et choisis le motif. Perdu = on ne le recontacte plus. S'il n'est juste pas prêt, clique plutôt <b>« Plus tard »</b> (suivi long terme).",null],
+  [/(nrp|repond pas|pas repondu|injoignable)/,"🔕 <b>Pas de réponse</b> : clique <b>« Pas répondu »</b>. Le compteur NRP monte ; au 4e, le client part tout seul en suivi long terme.",["pipeline","e2","Ouvrir À appeler"]],
+  [/(ajout|nouveau client|creer|nouvelle fiche|nouveau lead)/,"➕ <b>Nouveau client</b> : bouton rond <b>+</b> en bas à droite (Accueil ou Dossiers). Remplis nom, téléphone, code postal, produit : la fiche se crée en « Nouveaux leads ».",["pipeline","e1","Ouvrir Nouveaux leads"]],
+  [/(pose|planifier|programmer|date de pose)/,"📅 <b>Programmer une pose</b> : onglet <b>6. À planifier</b> → bouton vert <b>« Choisir la date de pose »</b> (date + poseur). Le CRM bloque si MPR pas déposé, OPX pas ouvert ou rétractation pas finie.",["pipeline","e6","Ouvrir À planifier"]],
+  [/(factur)/,"🧾 <b>Facturer</b> : quand c'est posé, onglet <b>8. Posé · à facturer</b> → <b>« Facturé · aides demandées »</b>. Le CRM prévient s'il manque la lettre d'octroi MPR ou si les dates ne sont pas dans l'ordre.",["pipeline","e8","Ouvrir Posé · à facturer"]],
+  [/(comptant|sans aide|reste a charge|rac)/,"💳 <b>Paiement comptant / reste à charge</b> : dans la fiche, onglet Gestion → <b>« Type de paiement »</b>. En comptant, pas de MPR/OPX demandé. Quand le client paie, bouton <b>« Client a payé »</b> sur sa ligne.",null],
+  [/(carte|distance|km|tournee)/,"🗺️ <b>Carte</b> : tous les clients avec leur étape. Clique un point : tu vois les clients à moins de 25 km. Mode <b>Tournées</b> = poses à venir par poseur.",["carte","","Ouvrir la carte"]],
+  [/(planning|agenda|tache)/,"🗓️ <b>Planning</b> : toutes les tâches se créent seules à partir des dates des fiches (rappels, relances devis J+3/7/14, poses, factures, fournisseurs à 45 j, commissions).",["planning","","Ouvrir le planning"]],
+  [/(poseur|igor|kevin|acces|code|connect)/,"🔑 <b>Accès</b> : Réglages → « Copier le lien d'accès poseur ». Les poseurs se connectent en mode Poseur avec prénom + PIN et ne voient que leurs chantiers. Les gérants utilisent le code gérant.",["reglages","","Ouvrir Réglages"]],
+  [/(retour|erreur|tromp|annuler le clic|etape d'avant)/,"↩️ <b>Erreur de clic</b> : bouton <b>« Étape d'avant »</b> sur la ligne du client. Tu peux aussi ouvrir la fiche et changer l'étape à la main.",null],
+  [/(synchro|sauvegard|hors ligne|internet)/,"🔄 <b>Synchro</b> : tout est enregistré sur l'appareil puis envoyé au serveur dès qu'il y a internet. Le point vert en haut à droite = à jour.",null],
+  [/(installer|appli|icone|bureau)/,"📲 <b>Installer le CRM</b> : dans Chrome, icône « Installer » dans la barre d'adresse (ordi) ou menu ⋮ → « Ajouter à l'écran d'accueil » (téléphone).",null],
+];
+function irisClient(d){ return `<button class="iris-c" data-open="${esc(d.id)}"><b>${esc(fullName(d))}</b><span>${esc([d.ville||d.cp,etapeLabel(d.etape)].filter(Boolean).join(" · "))}${d.tel?" · "+esc(d.tel):""}</span></button>`; }
+function irisGo(nav,filter,label){ return `<button class="iris-go" data-nav="${nav}"${filter?` data-filter="${filter}"`:""}>${esc(label)} →</button>`; }
+function irisRepond(q){
+  const t=nrm(q); const all=actifs(); const t0=today();
+  if(!t) return "";
+  if(/^(salut|bonjour|hello|coucou|yo|aide|help|\?)$/.test(t) || /(que sais tu|tu sais faire|comment ca marche le crm|comment marche|explique le crm|c'est quoi le crm)/.test(t))
+    return `Je suis <b>Iris</b>, je t'aide à te retrouver dans le CRM.<br><br>Le CRM suit chaque client en <b>3 parties</b> :<br>1 · <b>Vendre</b> (lead → appel → devis)<br>2 · <b>Monter & poser</b> (dossier aides → planif → pose)<br>3 · <b>Encaisser</b> (facture → paiements → soldé)<br><br>Sur chaque client, le <b class="vert">bouton vert</b> = étape suivante.<br><br>Tu peux me demander : un nom de client, « je fais quoi aujourd'hui », « devis à relancer », « comment je mets un client en signé », « c'est quoi Dossier aides »…`;
+  if(!/comment/.test(t) && /(aujourd|fais quoi|a faire|priorit|urgent|en retard|ma journee|to do|todo)/.test(t)){
+    const T=tachesAgenda().filter(x=>x.date && x.date<=t0).sort((a,b)=>a.date.localeCompare(b.date));
+    if(!T.length) return "Rien en retard ni prévu aujourd'hui. 👌 Regarde les leads à rappeler ou les devis à relancer."+irisGo("pipeline","leads","Leads à rappeler");
+    const par={}; T.forEach(x=>par[x.txt.split(" ·")[0]]=(par[x.txt.split(" ·")[0]]||0)+1);
+    return `<b>${T.length} tâche${T.length>1?"s":""}</b> pour aujourd'hui ou en retard :<br>${Object.entries(par).map(([k,n])=>`• ${esc(k)} : ${n}`).join("<br>")}<div class="iris-list">${T.slice(0,8).map(x=>`<button class="iris-c" data-open="${esc(x.d.id)}"><b>${x.ic} ${esc(fullName(x.d))}</b><span>${esc(x.txt)}${x.date<t0?" · en retard depuis le "+fmtDate(x.date):""}</span></button>`).join("")}</div>${irisGo("planning","","Tout voir dans le Planning")}`;
+  }
+  if(/(encaisser|argent|tresor|reste a|combien.*(doit|attend)|on attend)/.test(t)){
+    const live=all.filter(d=>Number(d.etape)!==0);
+    const dem=live.filter(d=>[9,10].includes(Number(d.etape))).reduce((s,d)=>s+resteAEncaisser(d),0);
+    const fac=live.filter(d=>Number(d.etape)===8).reduce((s,d)=>s+resteAEncaisser(d),0);
+    const cli=live.filter(d=>Number(d.etape)>=5&&Number(d.etape)<=7).reduce((s,d)=>s+racDu(d),0);
+    const top=live.filter(d=>Number(d.etape)>=8&&Number(d.etape)<=10&&resteAEncaisser(d)>0).sort((a,b)=>resteAEncaisser(b)-resteAEncaisser(a)).slice(0,5);
+    return `💶 <b>Reste à encaisser : ${eur(dem+fac+cli)}</b><br>• ${eur(dem)} déjà demandés (aides déposées, en attente)<br>• ${eur(fac)} à facturer / demander${cli?`<br>• ${eur(cli)} dus par des clients avant pose`:""}<br><br>Les plus gros montants :<div class="iris-list">${top.map(d=>`<button class="iris-c" data-open="${esc(d.id)}"><b>${esc(fullName(d))}</b><span>${eur(resteAEncaisser(d))} · ${esc(etapeLabel(d.etape))}</span></button>`).join("")}</div>${irisGo("pipeline","encaisser","Voir les installés à encaisser")}`;
+  }
+  if(/(pose|chantier).*(semaine|venir|prochain|demain)|(semaine|demain).*(pose|chantier)|^poses?$/.test(t)){
+    const fin=addJ(t0,7); const P=all.filter(d=>d.datePose && d.datePose>=t0 && d.datePose<=fin && [6,7].includes(Number(d.etape))).sort((a,b)=>a.datePose.localeCompare(b.datePose));
+    return P.length?`🛠️ <b>${P.length} pose${P.length>1?"s":""}</b> dans les 7 jours :<div class="iris-list">${P.map(d=>`<button class="iris-c" data-open="${esc(d.id)}"><b>${fmtDate(d.datePose)} · ${esc(fullName(d))}</b><span>${esc(d.poseur||"⚠ sans poseur")} · ${esc(d.ville||d.cp||"")} · ${esc(d.produit||"")}</span></button>`).join("")}</div>${irisGo("planning","","Ouvrir le planning")}`:"Aucune pose prévue dans les 7 prochains jours."+irisGo("pipeline","e6","Voir les clients à planifier");
+  }
+  if(/devis/.test(t) && /(relanc|attente|sans reponse|en cours|envoye)/.test(t)){
+    const D=all.filter(d=>Number(d.etape)===4).map(d=>({d,j:daysSince(d.dateRelanceDevis||d.dateEnvoiDevis)})).filter(x=>x.j==null||x.j>=3).sort((a,b)=>(b.j||0)-(a.j||0));
+    return `📄 <b>${D.length} devis</b> à relancer (envoyés ou relancés il y a 3 jours ou plus) :<div class="iris-list">${D.slice(0,8).map(x=>`<button class="iris-c" data-open="${esc(x.d.id)}"><b>${esc(fullName(x.d))}</b><span>${x.d.devisTTC?eur(x.d.devisTTC)+" · ":""}${x.j!=null?"il y a "+x.j+" j":"date inconnue"}${x.d.tel?" · "+esc(x.d.tel):""}</span></button>`).join("")}</div>Après l'appel, clique <b>« Relancé aujourd'hui »</b> sur sa ligne.${irisGo("pipeline","e4","Ouvrir Devis envoyés")}`;
+  }
+  // Explication d'une étape
+  const et=ETAPES_UI.find(x=>{ const l=nrm(x.l); return t.includes(l) || l.split(" ").filter(w=>w.length>4).some(w=>t.includes(w)&&/(c'est quoi|etape|onglet|ca veut dire|signifie|quoi)/.test(t)); });
+  if(et && /(c'est quoi|etape|onglet|ca veut dire|signifie|quoi|explique)/.test(t)){
+    const n=all.filter(et.fn).length; return `${et.ic} <b>${esc(et.l)}</b> (${n} client${n>1?"s":""})<br>${esc(et.aide)}${irisGo("pipeline",et.k,"Ouvrir l'onglet")}`;
+  }
+  // Comment faire…
+  for(const [re,txt,go] of IRIS_HOW) if(re.test(t) && /(comment|ou|quoi|faire|je|on|marche|c'est)/.test(t)) return txt+(go?irisGo(go[0],go[1],go[2]):"");
+  // Compter
+  if(/combien/.test(t)){ const et2=ETAPES_UI.find(x=>nrm(x.l).split(" ").some(w=>w.length>4&&t.includes(w))); if(et2){ const n=all.filter(et2.fn).length; return `${et2.ic} <b>${n}</b> client${n>1?"s":""} en « ${esc(et2.l)} ».${irisGo("pipeline",et2.k,"Les voir")}`; } }
+  // Recherche client (nom, téléphone, ville, mail)
+  const mots=t.replace(/\b(ou est|ou en est|trouve|cherche|client|fiche|dossier|de|la|le|les|du|mr|mme|madame|monsieur|m|mr\.)\b/g," ").split(" ").filter(w=>w.length>=3 || /\d{4,}/.test(w));
+  if(mots.length){
+    const hits=all.map(d=>{ const hay=nrm([d.nom,d.prenom,d.ville,d.cp,d.email].join(" "))+" "+String(d.tel||"").replace(/\D/g,""); const sc=mots.filter(w=>hay.includes(w.replace(/\s/g,""))).length; return {d,sc}; }).filter(x=>x.sc===mots.length).map(x=>x.d);
+    if(hits.length===1){ const d=hits[0]; return `J'ai trouvé <b>${esc(fullName(d))}</b> :<br>• Étape : <b>${esc(etapeLabel(d.etape))}</b><br>• ${esc([d.produit,d.ville||d.cp,srcKey(d)].filter(Boolean).join(" · "))}${d.tel?"<br>• 📞 "+esc(d.tel):""}${d.email?"<br>• ✉️ "+esc(d.email):""}${resteAEncaisser(d)?"<br>• Reste à encaisser : "+eur(resteAEncaisser(d)):""}<div class="iris-list">${irisClient(d)}</div>`; }
+    if(hits.length>1) return `${hits.length} clients correspondent${hits.length>10?" (les 10 premiers)":""} :<div class="iris-list">${hits.slice(0,10).map(irisClient).join("")}</div>`;
+  }
+  return `Je n'ai pas compris 🙈. Essaie un <b>nom de client</b>, une <b>ville</b>, un <b>numéro</b>, ou une de ces questions :`;
+}
+function irisAdd(who,html){ const box=$("#irisMsgs"); if(!box) return; const m=document.createElement("div"); m.className="iris-m "+who; m.innerHTML=html; box.appendChild(m); box.scrollTop=box.scrollHeight; }
+function irisAsk(q){ irisAdd("moi",esc(q)); let r; try{ r=irisRepond(q); }catch(e){ r="Oups, petite erreur de mon côté. Réessaie autrement."; console.warn(e); } irisAdd("iris",r); if(/pas compris/.test(r)) irisSugg(); }
+function irisSugg(){ irisAdd("iris",`<div class="iris-sugg">${IRIS_SUGG.map(s=>`<button data-iris="${esc(s)}">${esc(s)}</button>`).join("")}</div>`); }
+function irisInit(){
+  if($("#irisBtn")) return;
+  const b=document.createElement("button"); b.id="irisBtn"; b.className="iris-fab"; b.setAttribute("aria-label","Aide"); b.innerHTML="💬<span>Aide</span>"; document.body.appendChild(b);
+  const p=document.createElement("div"); p.id="iris"; p.className="iris-panel"; p.hidden=true;
+  p.innerHTML=`<div class="iris-h"><div><b>Iris</b> <span class="small muted">· aide du CRM</span></div><button class="iris-x" aria-label="Fermer">✕</button></div><div id="irisMsgs" class="iris-msgs"></div><form id="irisForm" class="iris-f"><input id="irisIn" type="text" placeholder="Un nom, une question…" autocomplete="off"><button class="btn primary" type="submit">➤</button></form>`;
+  document.body.appendChild(p);
+  b.addEventListener("click",()=>{ p.hidden=!p.hidden; if(!p.hidden){ if(!$("#irisMsgs").children.length){ irisAdd("iris","Salut 👋 Je suis <b>Iris</b>. Dis-moi un nom de client ou pose-moi une question sur le CRM."); irisSugg(); } setTimeout(()=>$("#irisIn").focus(),50); } });
+  p.querySelector(".iris-x").addEventListener("click",()=>{ p.hidden=true; });
+  $("#irisForm").addEventListener("submit",ev=>{ ev.preventDefault(); const i=$("#irisIn"); const q=i.value.trim(); if(!q) return; i.value=""; irisAsk(q); });
+  p.addEventListener("click",ev=>{ const s=ev.target.closest("[data-iris]"); if(s){ ev.stopPropagation(); irisAsk(s.dataset.iris); return; } if(ev.target.closest("[data-open],[data-nav]") && window.innerWidth<760) p.hidden=true; });
+}
 /* ---------- Démarrage ---------- */
 (async function boot(){
   const m=location.hash.match(/serveur=([^&]+)/);
@@ -1860,6 +1958,7 @@ window.__catImport = async function(items){ const mapped=items.map(i=>({categori
   try{ await DB.open(); await loadAll(); }catch(e){ document.body.innerHTML='<p style="padding:20px">Stockage local indisponible sur ce navigateur (navigation privée ?).</p>'; return; }
   S.view = isPoseur()?"poseur":"dash";
   render();
+  if(!isPoseur()) irisInit();
   if(CFG.role && CFG.role!=="demo") syncNow();
   if("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(()=>{});
 })();
