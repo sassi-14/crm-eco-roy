@@ -1062,7 +1062,7 @@ function viewReglages(){
     ${S.sync.err?`<div class="small neg">${esc(S.sync.err)}</div>`:""}
     <button class="btn" data-act="sync">Synchroniser maintenant</button>
     ${isAdmin()?`<button class="btn" data-act="export">Exporter une sauvegarde (JSON)</button>`:""}
-    ${isAdmin()&&CFG.role!=="demo"?`<button class="btn" data-act="poseurlink">Copier le lien d'accès poseur</button><button class="btn primary" data-act="regies">🤝 Gérer les accès des régies</button>`:""}
+    ${isAdmin()&&CFG.role!=="demo"?`<button class="btn" data-act="poseurlink">Copier le lien d'accès poseur</button><button class="btn primary" data-act="regies">🤝 Gérer les accès des régies</button><button class="btn" data-act="actus">📰 Actualités du site (à valider)</button>`:""}
     <button class="btn danger" data-act="logout">Se déconnecter</button>
   </div>
   ${isAdmin()?`<h2>Poseurs</h2><div class="card grid"><label class="f"><span>Noms (séparés par des virgules)</span><input type="text" id="poseursIn" value="${esc(poseursList().join(", "))}"></label><button class="btn" data-act="saveposeurs">Enregistrer</button>
@@ -1126,6 +1126,9 @@ document.addEventListener("click", async e=>{
     case "loginmode": S.loginMode=a.dataset.v; render(); break;
     case "regielink": { const link=location.origin+location.pathname+"#serveur="+encodeURIComponent(CFG.url)+"&mode=regie"; try{ await navigator.clipboard.writeText(link); toast("Lien régie copié. Envoie-le avec le nom et le PIN de la régie."); }catch(_){ openModal(`<h2 style="margin-top:0">Lien régie</h2><div style="word-break:break-all;user-select:all">${esc(link)}</div>`); } break; }
     case "regies": await openRegies(); break;
+    case "actus": await openActus(); break;
+    case "actustatut": { try{ await api("actuStatut",{slug:a.dataset.slug,statut:a.dataset.v}); toast(a.dataset.v==="publie"?"Article publié sur le site":a.dataset.v==="refuse"?"Article refusé":"Article repassé en brouillon"); await openActus(); }catch(e){ toast(e.message); } break; }
+    case "actuvoir": { const x=(S._actus||[]).find(z=>z.slug===a.dataset.slug); if(x) openModal(`<h2 style="margin-top:0">${esc(x.titre)}</h2><p class="small muted">${esc(x.categorie)} · ${esc(x.date)} · ${esc(x.statut)}</p><p><b>${esc(x.resume)}</b></p><div class="actu-apercu">${String(x.contenu||"").replace(/<(?!\/?(p|h2|h3|ul|ol|li|strong|em|br)\b)[^>]*>/gi,"")}</div><p class="small muted" style="word-break:break-all">Sources : ${esc(x.sources)}</p><div class="row wrap" style="gap:8px"><button class="btn primary" data-act="actustatut" data-slug="${esc(x.slug)}" data-v="publie">Publier sur le site</button><button class="btn" data-act="actustatut" data-slug="${esc(x.slug)}" data-v="refuse">Refuser</button></div>`); break; }
     case "regieadd": { const nom=($("#regNom")||{}).value?.trim(); if(!nom) break; try{ const r=await api("regieAdd",{nom}); await openRegies(r); }catch(e){ toast(e.message); } break; }
     case "regiedel": { if(!(await confirmBox("Supprimer l'accès de la régie « "+a.dataset.nom+" » ? Elle ne pourra plus se connecter (ses clients restent dans le CRM)."))) break; try{ await api("regieDel",{nom:a.dataset.nom}); await openRegies(); }catch(e){ toast(e.message); } break; }
     case "regiecopy": { const msg=a.dataset.msg; try{ await navigator.clipboard.writeText(msg); toast("Message copié : colle-le dans WhatsApp ou un mail à la régie"); }catch(_){ toast("Sélectionne le texte et copie-le"); } break; }
@@ -1944,6 +1947,15 @@ async function openRegies(nouvelle){
     <div class="row wrap" style="gap:6px;margin-top:6px"><button class="btn" data-act="regiecopy" data-msg="${esc(msg(r))}">📋 Copier le message d'accès</button><button class="btn danger" data-act="regiedel" data-nom="${esc(r.nom)}">Supprimer</button></div></div>`).join("")||'<div class="small muted">Aucune régie pour l\'instant.</div>'}</div>
   <h3>Ajouter une régie</h3><div class="row" style="gap:6px"><input type="text" id="regNom" placeholder="Nom (tel qu'il apparaît en source)" style="flex:1;min-width:0"><button class="btn primary" data-act="regieadd">Créer</button></div>
   <div class="small muted" style="margin-top:6px">Pour les nouveaux clients d'une régie, mets son nom dans le champ « Régie / apporteur » de la fiche (ou la régie les envoie elle-même depuis son accès).</div>`);
+}
+
+async function openActus(){
+  openModal('<h2 style="margin-top:0">Actualités du site</h2><div class="small muted">Chargement…</div>');
+  let L=[]; try{ L=(await api("actusAdmin")).articles||[]; S._actus=L; }catch(e){ openModal(`<h2 style="margin-top:0">Actualités du site</h2><div class="neg small">${esc(e.message)}</div>`); return; }
+  const lab={brouillon:"À valider",publie:"En ligne",refuse:"Refusé"};
+  openModal(`<h2 style="margin-top:0">Actualités du site</h2><p class="small muted">Le bot rédige un article tous les 3 jours. Rien n'est en ligne sans ton clic sur « Publier ».</p>
+  <div class="grid" style="gap:8px">${L.map(x=>`<div class="card"><div class="row" style="gap:8px;align-items:flex-start"><div class="grow"><b>${esc(x.titre)}</b><div class="small muted">${esc(x.categorie)} · ${esc(x.date)}</div></div><span class="badge ${x.statut==="publie"?"":"grey"}">${esc(lab[x.statut]||x.statut)}</span></div>
+  <div class="row wrap" style="gap:6px;margin-top:8px"><button class="btn" data-act="actuvoir" data-slug="${esc(x.slug)}">Lire</button>${x.statut!=="publie"?`<button class="btn primary" data-act="actustatut" data-slug="${esc(x.slug)}" data-v="publie">Publier</button>`:`<button class="btn" data-act="actustatut" data-slug="${esc(x.slug)}" data-v="brouillon">Retirer du site</button>`}</div></div>`).join("")||'<div class="small muted">Aucun article pour l\'instant. Le premier arrive au prochain passage du bot.</div>'}</div>`);
 }
 /* ---------- Espace régie : la régie voit uniquement ses clients ---------- */
 const REGIE_ETAPES=[["Reçu",[1]],["Appelé",[2,3]],["Devis envoyé",[4]],["Signé",[5,6,7]],["Posé",[8,9,10]],["Payé",[11]]];
