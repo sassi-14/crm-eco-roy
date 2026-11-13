@@ -526,7 +526,7 @@ async function addPhotos(d, kind, files){
     const id=uid(); const full=await compress(f,1600,.78); const thumb=await compress(f,360,.6);
     await DB.put("blobs",{id,dossierId:d.id,kind,full,thumb,name:f.name||kind+".jpg",uploaded:CFG.role==="demo"});
     S.thumbs.set(id,thumb);
-    (d.photos=d.photos||[]).push({id,kind,t:Date.now(),by:isPoseur()?CFG.poseur:"admin",pending:CFG.role!=="demo"});
+    (d.photos=d.photos||[]).push({id,kind,t:Date.now(),by:isAdmin()?"admin":(CFG.poseur||CFG.regie),pending:CFG.role!=="demo"});
   }
   await saveDossier(d); render();
 }
@@ -543,6 +543,39 @@ async function ensureThumb(p){
   fetching.add(p.id);
   try{ const r=await api("file",{id:p.thumbId}); S.thumbs.set(p.id,r.dataUrl); await DB.put("blobs",{id:p.id,thumb:r.dataUrl,uploaded:true}); safeRender(); }catch(e){ console.warn(e); }
   finally{ fetching.delete(p.id); }
+}
+function posLink(){ return isRegie() && !!CFG.poseur; }
+/* ---------- Documents (CNI, avis d'impôt…) : la régie peut les envoyer quand on les demande ---------- */
+const DOC_TYPES=[["cni","Carte d'identité"],["avis","Avis d'impôt"],["taxe","Taxe foncière / acte de propriété"],["facture","Facture d'énergie"],["autredoc","Autre document"]];
+const DOC_KINDS=DOC_TYPES.map(x=>x[0]);
+const docLabel=k=>(DOC_TYPES.find(x=>x[0]===k)||[k,k])[1];
+function readDataUrl(f){ return new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=()=>rej(new Error("Fichier illisible")); r.readAsDataURL(f); }); }
+async function addDocs(d, kind, files){
+  for(const f of files){
+    const pdf=/pdf/i.test(f.type)||/\.pdf$/i.test(f.name||"");
+    if(!pdf && !/^image\//.test(f.type)){ toast("Envoyez un PDF ou une photo."); continue; }
+    if(f.size>9e6){ toast("Fichier trop lourd (9 Mo maximum)."); continue; }
+    const id=uid(); const full=pdf?await readDataUrl(f):await compress(f,2200,.85);
+    await DB.put("blobs",{id,dossierId:d.id,kind,full,thumb:pdf?"":full,name:f.name||kind,uploaded:CFG.role==="demo"});
+    (d.photos=d.photos||[]).push({id,kind,label:docLabel(kind),name:String(f.name||docLabel(kind)).slice(0,80),pdf,t:Date.now(),by:isAdmin()?"admin":(CFG.regie||CFG.poseur),pending:CFG.role!=="demo"});
+  }
+  await saveDossier(d); toast("Document ajouté ✅ il part dès que la connexion le permet"); render();
+}
+function docsList(d){ const L=(d.photos||[]).filter(p=>DOC_KINDS.includes(p.kind)&&!p.del).sort((a,b)=>a.t-b.t);
+  return L.map(p=>`<div class="row small" style="gap:8px;align-items:center"><span>${p.pdf?"📄":"🖼️"}</span><div class="grow"><b>${esc(docLabel(p.kind))}</b> <span class="muted">${esc(p.name||"")} · ${fmtDate(p.t)}${p.by&&p.by!=="admin"?" · par "+esc(p.by):""}</span></div>${p.pending?'<span class="badge grey">en attente d\'envoi</span>':isAdmin()&&p.url?`<a href="${esc(p.url)}" target="_blank" rel="noopener">Ouvrir</a>`:'<span class="badge">reçu</span>'}</div>`).join("")||'<div class="small muted">Aucun document pour l\'instant.</div>'; }
+function docsBlockRegie(d){
+  const dem=(d.docsDemandes||[]).filter(k=>!(d.photos||[]).some(p=>p.kind===k&&!p.del));
+  return `<h2>Documents</h2><div class="card grid">
+    ${dem.length?`<div class="small" style="background:var(--warn-bg,#fff4e0);border-radius:10px;padding:10px">📌 Eco Roy vous demande : <b>${dem.map(docLabel).map(esc).join(", ")}</b></div>`:'<div class="small muted">Si Eco Roy vous demande un document (carte d\'identité, avis d\'impôt…), envoyez-le ici en PDF ou en photo.</div>'}
+    ${docsList(d)}
+    <div class="row" style="flex-wrap:wrap;gap:8px">${DOC_TYPES.map(([k,l])=>`<label class="btn ${dem.includes(k)?"primary":""}" style="cursor:pointer">+ ${esc(l)}<input type="file" accept="application/pdf,image/*" hidden data-doc="${k}" data-id="${esc(d.id)}"></label>`).join("")}</div></div>`;
+}
+function docsBlockAdmin(d){
+  const dem=d.docsDemandes||[];
+  return `<h3 style="margin-top:14px">Documents</h3>${docsList(d)}
+  <div class="small muted" style="margin-top:8px">Demander à la régie (elle le verra en haut de la fiche client) :</div>
+  <div class="row" style="flex-wrap:wrap;gap:8px">${DOC_TYPES.map(([k,l])=>`<button class="btn ${dem.includes(k)?"primary":""}" data-act="docask" data-k="${k}">${dem.includes(k)?"✓ ":""}${esc(l)}</button>`).join("")}</div>
+  <div class="row" style="flex-wrap:wrap;gap:8px;margin-top:8px">${DOC_TYPES.map(([k,l])=>`<label class="btn" style="cursor:pointer">📎 ${esc(l)}<input type="file" accept="application/pdf,image/*" hidden data-doc="${k}" data-id="${esc(d.id)}"></label>`).join("")}</div>`;
 }
 function photoGrid(d, kind, canAdd){
   const ps=photosOf(d,kind);
@@ -571,7 +604,7 @@ function render(){
   renderTabs();
   let h="";
   const v=S.view;
-  if(isRegie()) h = v==="dossier" ? viewRegieClient(S.dossiers.get(S.param)) : v==="nouveau" ? viewRegieNew() : v==="reglages" ? viewReglages() : viewRegieList();
+  if(isRegie()) h = v==="dossier" ? (posLink() && S.prevView==="poseur" ? viewChantierPoseur(S.dossiers.get(S.param)) : viewRegieClient(S.dossiers.get(S.param))) : v==="nouveau" ? viewRegieNew() : v==="reglages" ? viewReglages() : v==="poseur" && posLink() ? viewPoseurList() : viewRegieList();
   else if(isPoseur()) h = v==="dossier" ? viewChantierPoseur(S.dossiers.get(S.param)) : v==="reglages" ? viewReglages() : viewPoseurList();
   else if(v==="dash") h=viewDash();
   else if(v==="pipeline") h=dossToggle()+(S.dossView==="kanban"?viewKanban():viewPipeline());
@@ -594,7 +627,7 @@ function safeRender(){
 }
 document.addEventListener("focusout",()=>setTimeout(()=>{ if(S.needRender && !sigDirty){ const a=document.activeElement; if(!a || !/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)){ S.needRender=false; captureDraft(); S._keepScroll=true; render(); } } },300));
 function header(){
-  const title = isRegie() ? (S.view==="nouveau"?"Nouveau client":S.view==="dossier"?"Suivi du client":"Mes clients") : isPoseur() ? "Mes chantiers" : ({dash:"Tableau de bord",pipeline:"Dossiers",dossier:"Dossier",carte:"Carte",planning:"Planning",finances:"Gestion",reglages:"Réglages"})[S.view]||"CRM";
+  const title = isRegie() ? (S.view==="nouveau"?"Nouveau client":S.view==="poseur"?"Mes chantiers":S.view==="dossier"?(S.prevView==="poseur"&&posLink()?"Chantier":"Suivi du client"):"Mes clients") : isPoseur() ? "Mes chantiers" : ({dash:"Tableau de bord",pipeline:"Dossiers",dossier:"Dossier",carte:"Carte",planning:"Planning",finances:"Gestion",reglages:"Réglages"})[S.view]||"CRM";
   const sub = isRegie() ? esc(CFG.regie)+" · Eco Roy" : isPoseur() ? esc(CFG.poseur) : (CFG.role==="demo"?"Mode démo (données locales)":"Eco-Roy");
   const back = (S.view==="dossier"||(isRegie()&&S.view==="nouveau")) ? `<button class="back" data-act="back" aria-label="Retour">←</button>` : "";
   return `<header class="top">${back}<h1>${title}<small>${sub}</small></h1><div class="sync" id="sync" data-act="sync"></div></header>`;
@@ -610,9 +643,9 @@ function renderSync(){
 }
 function renderTabs(){
   const nav=$("#tabs"); nav.hidden=false;
-  const items = isRegie() ? [["regie","Mes clients","list"],["reglages","Compte","gear"]] : isPoseur() ? [["poseur","Chantiers","wrench"],["reglages","Compte","gear"]] :
+  const items = isRegie() ? [["regie","Mes clients","list"]].concat(posLink()?[["poseur","Chantiers","wrench"]]:[]).concat([["reglages","Compte","gear"]]) : isPoseur() ? [["poseur","Chantiers","wrench"],["reglages","Compte","gear"]] :
     [["dash","Accueil","dash"],["pipeline","Dossiers","list"],["carte","Carte","map"],["planning","Planning","cal"],["finances","Gestion","euro"],["reglages","Réglages","gear"]];
-  const cur = (S.view==="dossier"||S.view==="nouveau") ? (isRegie()?"regie":isPoseur()?"poseur":"pipeline") : S.view;
+  const cur = (S.view==="dossier"||S.view==="nouveau") ? (isRegie()?(S.prevView==="poseur"&&S.view==="dossier"?"poseur":"regie"):isPoseur()?"poseur":"pipeline") : S.view;
   nav.innerHTML=items.map(([v,l,i])=>`<button data-nav="${v}" class="${cur===v?"on":""}">${IC[i]}${l}</button>`).join("");
 }
 function afterRender(){
@@ -827,7 +860,7 @@ function viewDossier(d){
   const tabs=[["parcours","Parcours"],["client","Client"],["elig","Éligibilité"],["admin","OPX / MPR"],["chantier","Chantier"],["fin","Finances"],["hist","Historique"]].concat((d.regie||(d.commentairesRegie||[]).length)?[["regie","💬 Régie"+((d.commentairesRegie||[]).length?" ("+d.commentairesRegie.length+")":"")]]:[]);
   let body="";
   if(S.tab==="parcours") body=parcoursView(d);
-  if(S.tab==="regie") body=`<div class="card grid"><div class="small muted">Régie : <b>${esc(d.regie||"—")}</b>. Elle voit l'étape du client et ces messages (pas les montants, sauf sa commission).</div>${(d.commentairesRegie||[]).slice().sort((a,b)=>a.t-b.t).map(c=>`<div class="rmsg ${c.by==="Eco Roy"?"eco":""}"><div class="small muted">${esc(c.by)} · ${new Date(c.t).toLocaleString("fr-FR",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}</div>${esc(c.txt)}</div>`).join("")||'<div class="small muted">Aucun message.</div>'}<textarea id="regieMsg" rows="2" placeholder="Répondre à la régie…"></textarea><button class="btn primary" data-act="regiecom" data-id="${esc(d.id)}">Envoyer à la régie</button></div>`;
+  if(S.tab==="regie") body=`<div class="card grid"><div class="small muted">Régie : <b>${esc(d.regie||"—")}</b>. Elle voit l'étape du client et ces messages (pas les montants, sauf sa commission).</div>${(d.commentairesRegie||[]).slice().sort((a,b)=>a.t-b.t).map(c=>`<div class="rmsg ${c.by==="Eco Roy"?"eco":""}"><div class="small muted">${esc(c.by)} · ${new Date(c.t).toLocaleString("fr-FR",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}</div>${esc(c.txt)}</div>`).join("")||'<div class="small muted">Aucun message.</div>'}<textarea id="regieMsg" rows="2" placeholder="Répondre à la régie…"></textarea><button class="btn primary" data-act="regiecom" data-id="${esc(d.id)}">Envoyer à la régie</button>${docsBlockAdmin(d)}</div>`;
   if(S.tab==="client") body=qualifCard(d)+`
     <div class="form three">
       ${F(d,"nom","Nom","text")}${F(d,"prenom","Prénom","text")}${F(d,"tel","Téléphone","tel")}
@@ -1056,7 +1089,7 @@ function viewFinances(){
 /* ----- Réglages ----- */
 function viewReglages(){
   return `<div class="card grid">
-    <div><b>Connecté en tant que</b> ${CFG.role==="demo"?"démo (local)":isPoseur()?"poseur · "+esc(CFG.poseur):isRegie()?"régie · "+esc(CFG.regie):"gérant"}</div>
+    <div><b>Connecté en tant que</b> ${CFG.role==="demo"?"démo (local)":isPoseur()?"poseur · "+esc(CFG.poseur):isRegie()?"régie · "+esc(CFG.regie)+(CFG.poseur?" + poseur · "+esc(CFG.poseur):""):"gérant"}</div>
     ${CFG.url?`<div class="small muted" style="word-break:break-all">${esc(CFG.url)}</div>`:""}
     <div class="small muted">Dernière synchro : ${CFG.lastSyncAt?new Date(CFG.lastSyncAt).toLocaleString("fr-FR"):"jamais"} · ${S.outbox} modif. en attente</div>
     ${S.sync.err?`<div class="small neg">${esc(S.sync.err)}</div>`:""}
@@ -1072,7 +1105,7 @@ function viewReglages(){
 
 /* ----- Vue poseur ----- */
 function viewPoseurList(){
-  const list=actifs().sort((a,b)=>String(a.datePose||"9").localeCompare(String(b.datePose||"9")));
+  const list=actifs().filter(d=>!isRegie()||d._pose).sort((a,b)=>String(a.datePose||"9").localeCompare(String(b.datePose||"9")));
   const todo=list.filter(d=>Number(d.etape)<8), done=list.filter(d=>Number(d.etape)>=8);
   const row=d=>{ const miss=[photosOf(d,"avant").length?null:"photos avant",photosOf(d,"apres").length?null:"photos après",d.satisfaction&&d.satisfaction.note?null:"satisfaction"].filter(Boolean);
     return `<div class="card item" data-open="${esc(d.id)}"><div class="grow"><div class="t">${esc(fullName(d))}</div>
@@ -1134,6 +1167,7 @@ document.addEventListener("click", async e=>{
     case "regiecopy": { const msg=a.dataset.msg; try{ await navigator.clipboard.writeText(msg); toast("Message copié : colle-le dans WhatsApp ou un mail à la régie"); }catch(_){ toast("Sélectionne le texte et copie-le"); } break; }
     case "regienew": S.view="nouveau"; window.scrollTo(0,0); render(); break;
     case "regiesave": await regieSave(); break;
+    case "docask": { const k=a.dataset.k; const L=new Set(d.docsDemandes||[]); L.has(k)?L.delete(k):L.add(k); d.docsDemandes=[...L]; await saveDossier(d); if(L.has(k)){ (d.commentairesRegie=d.commentairesRegie||[]).push({t:Date.now(),by:"Eco Roy",txt:"Merci de nous envoyer : "+docLabel(k)+" (dans la rubrique Documents de cette fiche)."}); await saveDossier(d); } toast(L.has(k)?"Demandé à la régie":"Demande retirée"); render(); break; }
     case "regiecom": { const dd=S.dossiers.get(a.dataset.id||S.param); const ta=$("#regieMsg"); const txt=(ta&&ta.value||"").trim(); if(!dd||!txt) break; (dd.commentairesRegie=dd.commentairesRegie||[]).push({t:Date.now(),by:isRegie()?(CFG.regie||"Régie"):"Eco Roy",txt}); await saveDossier(dd); toast("Message envoyé"); render(); break; }
     case "login": doLogin(); break;
     case "demo": startDemo(); break;
@@ -1177,12 +1211,13 @@ async function saveSatisfaction(d){
   if(!S.draftNote){ toast("Choisis une note (étoiles)"); return; }
   if(!sigDirty){ toast("Fais signer le client"); return; }
   const sigId=await addSignatureBlob(d, $("canvas.sig").toDataURL("image/png"));
-  d.satisfaction={note:S.draftNote,commentaire:S.draftCom,signataire:S.draftNom,signatureId:sigId,date:Date.now(),par:isPoseur()?CFG.poseur:"admin",
+  d.satisfaction={note:S.draftNote,commentaire:S.draftCom,signataire:S.draftNom,signatureId:sigId,date:Date.now(),par:isAdmin()?"admin":(CFG.poseur||CFG.regie),
     installation:!!S.d_satInstall,explications:!!S.d_satExpl,proprete:!!S.d_satPropre};
   await saveDossier(d); render(); toast("Fiche satisfaction enregistrée ✓");
 }
 document.addEventListener("change", async e=>{
   const el=e.target;
+  if(el.dataset.doc){ const d=S.dossiers.get(el.dataset.id||S.param); if(d && el.files.length) await addDocs(d, el.dataset.doc, [...el.files]); return; }
   if(el.dataset.photo){ const d=S.dossiers.get(S.param); if(d && el.files.length){ toast("Compression des photos…"); await addPhotos(d, el.dataset.photo, [...el.files]); } return; }
   const k=el.dataset.field; if(!k) return; const d=S.dossiers.get(S.param); if(!d) return;
   const v = el.type==="checkbox" ? el.checked : el.value;
@@ -1963,7 +1998,7 @@ function regieStep(d){ const e=Number(d.etape); return REGIE_ETAPES.findIndex(x=
 function regieStatut(d){ const e=Number(d.etape); if(e===0) return {t:"Perdu"+(d.motifKO?" · "+d.motifKO:""),c:"neg"}; if(e===12) return {t:"Pas pour maintenant (à relancer plus tard)",c:"muted"}; const i=regieStep(d); return {t:REGIE_ETAPES[i]?REGIE_ETAPES[i][0]:etapeLabel(e),c:""}; }
 function regieDots(d){ const i=regieStep(d); const e=Number(d.etape); return `<div class="rdots">${REGIE_ETAPES.map((x,k)=>`<span class="${e===0||e===12?"off":k<=i?"on":""}" title="${esc(x[0])}"></span>`).join("")}</div>`; }
 function viewRegieList(){
-  const all=actifs().sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)); const q=nrm(S.rq||""); const f=S.rf||"tous";
+  const all=actifs().filter(d=>!d._pose||d._regie).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)); const q=nrm(S.rq||""); const f=S.rf||"tous";
   const FF=[["tous","Tous",()=>true],["cours","En cours",d=>{const e=Number(d.etape);return e>=1&&e<=4;}],["signes","Signés",d=>{const e=Number(d.etape);return e>=5&&e<=7;}],["poses","Posés",d=>Number(d.etape)>=8&&Number(d.etape)<=11],["perdus","Perdus / plus tard",d=>[0,12].includes(Number(d.etape))]];
   const fn=(FF.find(x=>x[0]===f)||FF[0])[2];
   const L=all.filter(fn).filter(d=>!q||nrm([d.nom,d.prenom,d.ville,d.cp,d.tel].join(" ")).includes(q));
@@ -1983,6 +2018,7 @@ function viewRegieClient(d){
     <div style="margin-top:10px"><span class="pill-etape ${s.c}">${esc(s.t)}</span></div></div>
   <h2>Suivi</h2><div class="card rtl">${D.map(([l,t],k)=>{ const ok=e!==0&&e!==12&&k<=i; return `<div class="rstep ${ok?"on":""}"><span class="rb">${ok?"✓":k+1}</span><div class="grow"><b>${esc(l)}</b>${ok&&t?`<div class="small muted">${fmtDate(t)}</div>`:""}</div></div>`; }).join("")}${e===0?`<div class="small neg" style="margin-top:8px">Dossier perdu${d.motifKO?" : "+esc(d.motifKO):""}.</div>`:""}${e===12?`<div class="small muted" style="margin-top:8px">Le client n'est pas prêt pour l'instant, on le relancera plus tard.</div>`:""}</div>
   ${num(d.commission)?`<h2>Commission</h2><div class="card row"><div class="grow"><b>${eur(d.commission)}</b></div><div>${d.commissionPayeeLe?`<span class="badge">payée le ${fmtDate(d.commissionPayeeLe)}</span>`:`<span class="badge grey">${e>=8&&e<=11?"à payer (30 j après la pose)":"après la pose"}</span>`}</div></div>`:""}
+  ${docsBlockRegie(d)}
   <h2>Messages avec Eco Roy</h2><div class="card grid">${C.map(c=>`<div class="rmsg ${c.by==="Eco Roy"?"eco":""}"><div class="small muted">${esc(c.by)} · ${new Date(c.t).toLocaleString("fr-FR",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}</div>${esc(c.txt)}</div>`).join("")||'<div class="small muted">Aucun message. Écrivez ici une info utile sur ce client (disponibilités, remarque…).</div>'}
     <textarea id="regieMsg" rows="2" placeholder="Votre message à l'équipe Eco Roy…"></textarea><button class="btn primary" data-act="regiecom" data-id="${esc(d.id)}">Envoyer</button></div>`;
 }
