@@ -734,6 +734,10 @@ function viewDash(){
   for(const c of COLS){ if(!c.types) continue; cartes[c.k]=T.filter(x=>c.types.includes(x.type) && (!c.jusqua || !x.date || x.date<=c.jusqua)).map(x=>({d:x.d,txt:x.txt,ic:x.ic,date:x.date})); }
   // Devis : à relancer si envoyé / relancé il y a 3 jours ou plus
   cartes.devis=live.filter(d=>Number(d.etape)===4 && d.statutDevis!=="Refusé").map(d=>{ const last=d.dateRelanceDevis||d.dateEnvoiDevis; const nb=Number(d.nbRelancesDevis)||0; return {d,txt:(nb?"Relance n°"+(nb+1):"Relancer le devis")+(d.devisTTC?" · "+eur(d.devisTTC):""),ic:"📄",date:last?addJ(last,3):""}; }).filter(x=>!x.date||x.date<=t0);
+  // Rappels de pose : J-3 confirmation au client, J-1 rappel de la veille (message préparé, envoyé par toi)
+  live.filter(d=>Number(d.etape)>=6&&Number(d.etape)<=7&&d.datePose).forEach(d=>{ const j=Math.round((new Date(String(d.datePose).slice(0,10)+"T12:00")-new Date(t0+"T12:00"))/864e5);
+    if(j>=1&&j<=3&&!d.confPoseEnvoyee) cartes.pose.unshift({d,txt:"J-"+j+" · envoyer la confirmation de pose au client",ic:"📲",date:t0,mp:"msgpose3"});
+    if(j===1&&!d.rappelVeilleEnvoye) cartes.pose.unshift({d,txt:"Demain · envoyer le rappel de la veille au client",ic:"📲",date:t0,mp:"msgpose1"}); });
   // Argent dû par des clients (RAC / comptant)
   live.filter(d=>racDu(d)>0 && Number(d.etape)>=8).forEach(d=>cartes.argent.push({d,txt:"Client doit "+eur(racDu(d)),ic:"💳",date:""}));
   // Messages de régies sans réponse
@@ -745,7 +749,7 @@ function viewDash(){
   const goBtn=d=>{ const e=Number(d.etape); const a=(ACTIONS_ETAPE[e]||[]).find(x=>x[2]==="go"); const B=(v,l,c)=>`<button data-mact="qtri" data-id="${esc(d.id)}" data-v="${v}" class="${c||""}">${l}</button>`;
     return (a?B(a[0],a[1],"go"):"")+(e===4?B("relance","📣 Relancé"):"")+((e===1||e===2)?B("nrp","🔕 NRP"+(Number(d.nbNRP)?" ("+d.nbNRP+")":"")):""); };
   const card=x=>{ const r=rang(x); const quand=!x.date?"":(r===0?`<span class="pdate late">en retard · ${fmtDate(x.date)}</span>`:(r===1?`<span class="pdate today">aujourd'hui</span>`:`<span class="pdate">${fmtDate(x.date)}</span>`));
-    return `<div class="pcard ${r===0?"late":(r===1?"today":"")}" data-open="${esc(x.d.id)}"><div class="pt"><b>${esc(fullName(x.d))}</b>${quand}</div><div class="ps">${x.ic} ${esc(x.txt)}${x.d.ville||x.d.cp?" · "+esc(x.d.ville||x.d.cp):""}</div><div class="qtri pact">${x.d.tel?`<a class="ptel" href="tel:${esc(String(x.d.tel).replace(/[^\d+]/g,""))}" data-stop="1">📞 ${esc(x.d.tel)}</a>`:""}${goBtn(x.d)}</div></div>`; };
+    return `<div class="pcard ${r===0?"late":(r===1?"today":"")}" data-open="${esc(x.d.id)}"><div class="pt"><b>${esc(fullName(x.d))}</b>${quand}</div><div class="ps">${x.ic} ${esc(x.txt)}${x.d.ville||x.d.cp?" · "+esc(x.d.ville||x.d.cp):""}</div><div class="qtri pact">${x.d.tel?`<a class="ptel" href="tel:${esc(String(x.d.tel).replace(/[^\d+]/g,""))}" data-stop="1">📞 ${esc(x.d.tel)}</a>`:""}${x.mp?`<button data-mact="qtri" data-id="${esc(x.d.id)}" data-v="${x.mp}" class="go">📲 Préparer le message</button>`:goBtn(x.d)}</div></div>`; };
   const cols=COLS.filter(c=>(cartes[c.k]||[]).length);
   const nbRetard=Object.values(cartes).flat().filter(x=>rang(x)===0).length, nbJour=Object.values(cartes).flat().filter(x=>rang(x)===1).length;
   return `
@@ -996,7 +1000,8 @@ function parcoursView(d){
     ${F(d,"noteInterne","Note interne équipe (/5)","select",{options:["","1","2","3","4","5"]})}${F(d,"reserves","Réserves","text")}
     ${F(d,"pAttestationFin","Attestation de fin de travaux signée","check")}${F(d,"pDossierCEESigne","Dossier CEE signé","check")}
     ${F(d,"avisGoogleDemande","E-mail d'avis Google envoyé","check")}${F(d,"offreEntretien","Contrat d'entretien","select",{options:ENTRETIEN})}</div>
-    <div class="small muted" style="margin-top:6px">Le contrat d'entretien est proposé une fois le chantier fini et le client satisfait. RIB + mandat SEPA à ce moment-là.</div>`)}
+    <div class="small muted" style="margin-top:6px">Le contrat d'entretien est proposé une fois le chantier fini et le client satisfait. Envoie-lui le lien de paiement de la formule choisie :</div>
+    <div class="row" style="flex-wrap:wrap;gap:8px;margin-top:6px">${FORMULES.map(f=>`<button class="btn" data-act="copylien" data-k="${f.k}" data-l="${esc(f.l)}">💳 ${esc(f.l)} · ${esc(f.p)}</button>`).join("")}</div>`)}
   ${sec("07","Facture & dépôts",[9],`<div class="form">
     ${F(d,"numFacture","N° de facture","text")}${F(d,"dateFacture","Date de facture","date")}
     ${F(d,"dateDemandeSolde","Solde déposé le (MPR / OPX)","date")}${F(d,"controleCOFRAC","Contrôle COFRAC","select",{options:["Non demandé","Demandé · à planifier","Conforme","Non conforme · à traiter"]})}</div>${bl(bloquantsFacture(d),"Facture bloquée tant que :")}`)}
@@ -1094,7 +1099,7 @@ function viewReglages(){
     <div class="small muted">Dernière synchro : ${CFG.lastSyncAt?new Date(CFG.lastSyncAt).toLocaleString("fr-FR"):"jamais"} · ${S.outbox} modif. en attente</div>
     ${S.sync.err?`<div class="small neg">${esc(S.sync.err)}</div>`:""}
     <button class="btn" data-act="sync">Synchroniser maintenant</button>
-    ${isAdmin()?`<button class="btn" data-act="export">Exporter une sauvegarde (JSON)</button>`:""}
+    ${isAdmin()?`<button class="btn primary" data-act="exportcompta">📊 Export pour le comptable (Excel)</button><label class="btn" style="cursor:pointer;text-align:center">🏦 Importer un relevé Revolut (CSV)<input type="file" accept=".csv,text/csv" hidden id="revolutCsv"></label><button class="btn" data-act="liensstripe">💳 Liens de paiement entretien (Stripe)</button><button class="btn" data-act="export">Exporter une sauvegarde (JSON)</button>`:""}
     ${isAdmin()&&CFG.role!=="demo"?`<button class="btn" data-act="poseurlink">Copier le lien d'accès poseur</button><button class="btn primary" data-act="regies">🤝 Gérer les accès des régies</button><button class="btn" data-act="actus">📰 Actualités du site (à valider)</button>`:""}
     <button class="btn danger" data-act="logout">Se déconnecter</button>
   </div>
@@ -1195,6 +1200,12 @@ document.addEventListener("click", async e=>{
     case "closemodal": closeModal(); break;
     case "create": await createFromModal(); break;
     case "export": exportJSON(); break;
+    case "exportcompta": openExportCompta(); break;
+    case "docompta": exportCompta($("#ecDu").value,$("#ecAu").value); closeModal(); break;
+    case "liensstripe": openLiensStripe(); break;
+    case "savestripe": { const s=editableSettings(); s.liensEntretien={}; for(const f of FORMULES) s.liensEntretien[f.k]=(($("#ls_"+f.k)||{}).value||"").trim(); await pushSettings(); closeModal(); break; }
+    case "copylien": { const u=(SET().liensEntretien||{})[a.dataset.k]; if(!u){ toast("Ajoute d'abord le lien dans Réglages → Liens de paiement entretien"); break; } try{ await navigator.clipboard.writeText(u); toast("Lien "+a.dataset.l+" copié : colle-le au client"); }catch(_){ openModal(`<div style="word-break:break-all;user-select:all">${esc(u)}</div>`); } break; }
+    case "revapply": await revolutApply(); break;
     case "poseurlink": { const link=location.origin+location.pathname+"#serveur="+encodeURIComponent(CFG.url); try{ await navigator.clipboard.writeText(link); toast("Lien copié. Envoie-le aux poseurs avec leur PIN."); }catch(_){ prompt("Lien poseur :",link); } break; }
     case "saveposeurs": CFG.poseurs=$("#poseursIn").value.split(",").map(s=>s.trim()).filter(Boolean); saveCfg(); toast("Enregistré"); break;
     case "logout": if(await confirmBox("Se déconnecter ? Les modifications non synchronisées seront perdues.")){ localStorage.removeItem("ecoroy_cfg"); await DB.clear("dossiers"); await DB.clear("outbox"); await DB.clear("blobs"); CFG={}; S.dossiers.clear(); render(); } break;
@@ -1217,6 +1228,7 @@ async function saveSatisfaction(d){
 }
 document.addEventListener("change", async e=>{
   const el=e.target;
+  if(el.id==="revolutCsv"){ if(el.files[0]) await revolutImport(el.files[0]); el.value=""; return; }
   if(el.dataset.doc){ const d=S.dossiers.get(el.dataset.id||S.param); if(d && el.files.length) await addDocs(d, el.dataset.doc, [...el.files]); return; }
   if(el.dataset.photo){ const d=S.dossiers.get(S.param); if(d && el.files.length){ toast("Compression des photos…"); await addPhotos(d, el.dataset.photo, [...el.files]); } return; }
   const k=el.dataset.field; if(!k) return; const d=S.dossiers.get(S.param); if(!d) return;
@@ -1267,6 +1279,65 @@ async function createFromModal(){
   const d=newDossier({nom,prenom:$("#nPrenom").value.trim(),tel,cp:$("#nCp").value.trim(),source:$("#nSource").value,notes:$("#nNotes").value.trim()});
   await saveDossier(d); closeModal(); S.prevView=S.view; S.view="dossier"; S.param=d.id; S.tab="client"; history.pushState({v:"dossier"},""); render();
 }
+/* ---------- Export comptable (CSV lisible par Excel) ---------- */
+const FORMULES=[{k:"essentiel",l:"Essentiel",p:"14,90 €/mois"},{k:"serenite",l:"Sérénité",p:"26,90 €/mois"},{k:"premium",l:"Premium",p:"39,90 €/mois"}];
+function openExportCompta(){ const t=today(); const d1=t.slice(0,8)+"01";
+  const m1=new Date(); m1.setDate(1); m1.setMonth(m1.getMonth()-1); const pm=m1.toISOString().slice(0,8)+"01";
+  openModal(`<h2 style="margin-top:0">Export pour le comptable</h2><p class="small muted">Un fichier Excel avec, pour chaque chantier posé ou facturé sur la période : facture, aides (CEE, MPR), reste à charge, ce qui est encaissé et les coûts (matériel, poseur, commission).</p>
+  <div class="form"><label class="f"><span>Du</span><input type="date" id="ecDu" value="${pm}"></label><label class="f"><span>Au</span><input type="date" id="ecAu" value="${t}"></label></div>
+  <button class="btn primary block" data-act="docompta">Télécharger le fichier</button>`); }
+function exportCompta(du,au){
+  const ref=d=>String(d.dateFacture||d.dateInstallation||d.datePose||"").slice(0,10);
+  const L=actifs().filter(d=>Number(d.etape)>=8&&Number(d.etape)<=11).filter(d=>{ const r=ref(d); return r&&(!du||r>=du)&&(!au||r<=au); }).sort((a,b)=>ref(a).localeCompare(ref(b)));
+  const H=["Date facture","N° facture","Client","Adresse","CP","Ville","Produit","Montant TTC devis","Type de paiement","Prime CEE","CEE encaissée","MaPrimeRénov'","MPR encaissée","Reste à charge client","Reçu du client","Statut paiement client","Reste à encaisser","Matériel","Fournisseur","Facture fournisseur","Fournisseur payé le","Poseur","Coût pose","Régie / apporteur","Commission","Marge prévisionnelle","Date de pose","Étape"];
+  const n=v=>num(v)?String(Math.round(num(v)*100)/100).replace(".",","):"";
+  const rows=L.map(d=>[ref(d),d.numFacture||"",fullName(d),d.adresse||"",d.cp||"",d.ville||"",d.produit||"",n(d.devisTTC),d.typeFinancement||"",n(d.valoCEE),n(d.encaisseCEE),n(d.valoMPR),n(d.encaisseMPR),n(d.rac),n(d.racEncaisse),d.racStatut||"",n(resteAEncaisser(d)+racDu(d)),n(d.prixMateriel),d.fournisseur||"",n(d.montantFactureFournisseur),d.fournisseurPayeLe||"",d.poseur||"",n(d.prixPoseur),d.regie||"",n(d.commission),n(margePrev(d)),String(d.dateInstallation||d.datePose||"").slice(0,10),(ETAPES_UI.find(x=>x.n===Number(d.etape))||{}).l||""]);
+  const cell=v=>{ v=String(v==null?"":v); return /[;"\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; };
+  const csv="\ufeff"+[H,...rows].map(r=>r.map(cell).join(";")).join("\r\n");
+  const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8"})); a.download="eco-roy-compta-"+(du||"debut")+"-au-"+(au||today())+".csv"; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+  toast(L.length+" chantier(s) exporté(s)");
+}
+/* ---------- Liens de paiement Stripe pour les contrats d'entretien ---------- */
+function openLiensStripe(){ const L=SET().liensEntretien||{};
+  openModal(`<h2 style="margin-top:0">Liens de paiement entretien</h2><p class="small muted">Colle ici les liens de paiement Stripe (un par formule). Sur chaque fiche client, les boutons « 💳 » copient le bon lien pour l'envoyer au client.</p>
+  <div class="grid">${FORMULES.map(f=>`<label class="f"><span>${esc(f.l)} · ${esc(f.p)}</span><input type="url" id="ls_${f.k}" value="${esc(L[f.k]||"")}" placeholder="https://buy.stripe.com/..."></label>`).join("")}</div>
+  <button class="btn primary block" data-act="savestripe">Enregistrer</button>`); }
+/* ---------- Import d'un relevé Revolut : on rapproche les virements reçus des dossiers ---------- */
+function parseCSV(t){ const out=[]; let row=[],f="",q=false; const sep=(t.split("\n")[0].match(/;/g)||[]).length>(t.split("\n")[0].match(/,/g)||[]).length?";":",";
+  for(let i=0;i<t.length;i++){ const c=t[i]; if(q){ if(c==='"'){ if(t[i+1]==='"'){f+='"';i++;} else q=false; } else f+=c; } else if(c==='"') q=true; else if(c===sep){ row.push(f); f=""; } else if(c==="\n"){ row.push(f); out.push(row); row=[]; f=""; } else if(c!=="\r") f+=c; }
+  if(f||row.length){ row.push(f); out.push(row); } return out.filter(r=>r.some(x=>x.trim())); }
+async function revolutImport(file){
+  const rows=parseCSV(await file.text()); if(rows.length<2){ toast("Fichier vide ou illisible"); return; }
+  const H=rows[0].map(h=>h.trim().toLowerCase()); const col=(...ks)=>H.findIndex(h=>ks.some(k=>h.includes(k)));
+  const iD=col("date completed","completed date","date"), iDesc=col("description","reference","référence","libellé"), iA=col("amount","montant"), iP=col("payer","counterparty","contrepartie"), iS=col("state","statut");
+  if(iA<0){ toast("Colonne « Amount » introuvable : exporte le relevé Revolut en CSV"); return; }
+  const nrmS=x=>nrm(String(x||"")); const L=actifs().filter(d=>Number(d.etape)>=5&&Number(d.etape)<=11);
+  const props=[];
+  rows.slice(1).forEach((r,i)=>{ const m=num(String(r[iA]||"").replace(/[^\d,.-]/g,"")); if(!(m>0)) return; if(iS>=0&&/revert|declin|fail|annul/i.test(r[iS]||"")) return;
+    const txt=nrmS((r[iDesc]||"")+" "+(iP>=0?r[iP]:"")); const date=String(r[iD]||"").slice(0,10);
+    const type=/anah|maprimerenov|mprenov|\basp\b|agence nationale/.test(txt)?"MPR":/drapo|opx|cee|certificat/.test(txt)?"CEE":/sofinco|ecair|financo|cetelem|franfinance/.test(txt)?"RAC":"";
+    const reste=d=>type==="MPR"?Math.max(0,num(d.valoMPR)-num(d.encaisseMPR)):type==="CEE"?Math.max(0,num(d.valoCEE)-num(d.encaisseCEE)):racDu(d);
+    const parNom=L.filter(d=>{ const nn=nrmS(d.nom); return nn.length>=3&&txt.includes(nn); });
+    let cands=parNom.length?parNom:L.filter(d=>Math.abs(reste(d)-m)<1);
+    cands=cands.filter(d=>type?reste(d)>0:(racDu(d)>0||Math.max(0,num(d.valoCEE)-num(d.encaisseCEE))>0||Math.max(0,num(d.valoMPR)-num(d.encaisseMPR))>0));
+    const d=cands.length===1?cands[0]:null;
+    let t=type; if(d&&!t){ t=Math.abs(racDu(d)-m)<1?"RAC":Math.abs(Math.max(0,num(d.valoCEE)-num(d.encaisseCEE))-m)<1?"CEE":Math.abs(Math.max(0,num(d.valoMPR)-num(d.encaisseMPR))-m)<1?"MPR":"RAC"; }
+    props.push({i,date,m,txt:(r[iDesc]||"")+(iP>=0&&r[iP]?" · "+r[iP]:""),id:d?d.id:"",t:t||"RAC",nb:cands.length});
+  });
+  S.revProps=props;
+  const opts=id=>`<option value="">— ne rien faire —</option>`+L.slice().sort((a,b)=>fullName(a).localeCompare(fullName(b))).map(d=>`<option value="${esc(d.id)}" ${d.id===id?"selected":""}>${esc(fullName(d))}${d.ville?" · "+esc(d.ville):""}</option>`).join("");
+  openModal(`<h2 style="margin-top:0">Relevé Revolut : ${props.length} entrée(s) d'argent</h2><p class="small muted">Vérifie chaque ligne : choisis le client et ce que c'est (CEE, MPR ou paiement du client), puis valide. Rien n'est enregistré avant « Enregistrer ».</p>
+  <div class="grid" style="gap:10px;max-height:55vh;overflow:auto">${props.map((p,k)=>`<div class="card grid" style="gap:6px;padding:10px"><div><b>${eur(p.m)}</b> · ${esc(p.date)} <div class="small muted">${esc(p.txt)}</div>${!p.id&&p.nb>1?`<div class="small neg">${p.nb} clients possibles, choisis le bon</div>`:""}</div>
+    <div class="row" style="gap:6px;flex-wrap:wrap"><select id="rv_d${k}" style="flex:1;min-width:180px">${opts(p.id)}</select><select id="rv_t${k}"><option value="CEE" ${p.t==="CEE"?"selected":""}>Prime CEE</option><option value="MPR" ${p.t==="MPR"?"selected":""}>MaPrimeRénov'</option><option value="RAC" ${p.t==="RAC"?"selected":""}>Paiement du client</option></select></div></div>`).join("")||'<div class="small muted">Aucune entrée d\'argent dans ce fichier.</div>'}</div>
+  ${props.length?`<button class="btn primary block" data-act="revapply">Enregistrer les paiements choisis</button>`:""}`);
+}
+async function revolutApply(){ let n=0;
+  for(const [k,p] of (S.revProps||[]).entries()){ const id=($("#rv_d"+k)||{}).value; if(!id) continue; const t=($("#rv_t"+k)||{}).value; const d=S.dossiers.get(id); if(!d) continue;
+    if(t==="CEE") d.encaisseCEE=num(d.encaisseCEE)+p.m; else if(t==="MPR") d.encaisseMPR=num(d.encaisseMPR)+p.m; else { d.racEncaisse=num(d.racEncaisse)+p.m; if(num(d.rac)&&num(d.racEncaisse)>=num(d.rac)-1) d.racStatut="Encaissé"; }
+    (d.historique=d.historique||[]).push({t:Date.now(),etape:Number(d.etape),note:"Revolut : "+eur(p.m)+" reçu ("+t+") le "+p.date});
+    if(resteAEncaisser(d)<=0&&racDu(d)<=0&&Number(d.etape)>=8&&Number(d.etape)<=10){ setEtape(d,11); if(!d.dateSolde) d.dateSolde=today(); }
+    await saveDossier(d); n++; }
+  S.revProps=null; closeModal(); toast(n+" paiement(s) enregistré(s)"); render(); }
 function exportJSON(){
   const blob=new Blob([JSON.stringify(actifs(),null,1)],{type:"application/json"}); const a=document.createElement("a");
   a.href=URL.createObjectURL(blob); a.download="crm-eco-roy-"+today()+".json"; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1000);
@@ -1827,6 +1898,7 @@ document.addEventListener("click", async e=>{
     case "pltab": S.pltab=b.dataset.v; render(); break;
     case "qtri": { const v=b.dataset.v; const now=today();
       if(v==="perdu"){ openModal(`<h2 style="margin-top:0">${esc(fullName(d))} → Perdu</h2><p class="small muted">Pourquoi ? (perdu = on ne recontacte plus)</p><div class="grid" style="gap:8px">${["Refus définitif","Ne veut plus être contacté","Lead faux / non valable","Pas éligible","Annulé / abandonné","Installé par un concurrent"].map(m=>`<button class="btn" data-mact="qperdu" data-id="${esc(d.id)}" data-v="${esc(m)}">${esc(m)}</button>`).join("")}</div>`); break; }
+      if(v==="msgpose3"||v==="msgpose1"){ if(v==="msgpose3") d.confPoseEnvoyee=now; else d.rappelVeilleEnvoye=now; await saveDossier(d); S.ctpl=v==="msgpose3"?"m3":"m4"; openContact(d); break; }
       if(v==="rappel"){ setEtape(d,2); d.statutAppel="À rappeler"; }
       if(v==="nrp"){ setEtape(d,2); d.nbNRP=(Number(d.nbNRP)||0)+1; d.statutAppel="NRP"; if(d.nbNRP>=4){ d.statutAppel="Injoignable"; setEtape(d,12); } }
       if(v==="devis"){ setEtape(d,4); d.statutDevis="Envoyé · en attente"; if(!d.dateEnvoiDevis) d.dateEnvoiDevis=now; }
