@@ -166,7 +166,10 @@ function authenticate(a) {
   if (a.token && a.token === c.ADMIN_TOKEN) return {role: 'admin'};
   if (a.regie && a.pin) {
     var rk = Object.keys(c).filter(function (k) { return k.indexOf('REGIE_') === 0 && keyNom(k.slice(6)) === keyNom(a.regie); })[0];
-    if (rk && String(c[rk]).trim() === String(a.pin).trim()) return {role: 'regie', regie: rk.slice(6)};
+    if (rk && String(c[rk]).trim() === String(a.pin).trim()) {
+      var lk = Object.keys(c).filter(function (k) { return k.indexOf('REGIEPOSEUR_') === 0 && keyNom(k.slice(12)) === keyNom(rk.slice(6)); })[0];
+      return {role: 'regie', regie: rk.slice(6), poseur: lk ? String(c[lk]).trim() : undefined};
+    }
     Utilities.sleep(800);
     throw new Error('Nom de régie ou PIN incorrect');
   }
@@ -185,9 +188,10 @@ function actionPull(who, since) {
   var out = [], ids = [];
   all.forEach(function (r) {
     if (who.role === 'regie') {
-      if (!visibleForRegie(r.data, who.regie)) return;
+      var vr = visibleForRegie(r.data, who.regie), vp = who.poseur && visibleForPoseur(r.data, who.poseur);
+      if (!vr && !vp) return;
       ids.push(r.data.id);
-      if (r.serverTs > since) out.push(stripForRegie(r.data));
+      if (r.serverTs > since) out.push(stripRegiePoseur(r.data, who));
     } else if (who.role === 'poseur') {
       if (!visibleForPoseur(r.data, who.poseur)) return;
       ids.push(r.data.id);
@@ -210,15 +214,18 @@ function actionPush(who, records) {
       if (Number(inc.pv) !== PV) migrerV2(inc); // appli pas encore à jour : on traduit les étapes
       var row = index[inc.id]; var stored = row ? JSON.parse(sh.getRange(row, COLS.length).getValue()) : null;
       var merged;
-      if (who.role === 'regie') {
+      var asPoseur = who.role === 'regie' && who.poseur && stored && visibleForPoseur(stored, who.poseur);
+      if (who.role === 'regie' && !asPoseur) {
         if (stored) {
           if (!visibleForRegie(stored, who.regie)) return;
           merged = JSON.parse(JSON.stringify(stored));
           merged.commentairesRegie = mergeComments(stored.commentairesRegie, inc.commentairesRegie);
-          if (JSON.stringify(merged.commentairesRegie) === JSON.stringify(stored.commentairesRegie || [])) { returned.push(stripForRegie(stored)); return; }
+          var nDocs = mergeDocsRegie(merged, stored, inc, who.regie);
+          if (!nDocs && JSON.stringify(merged.commentairesRegie) === JSON.stringify(stored.commentairesRegie || [])) { returned.push(stripRegiePoseur(stored, who)); return; }
           merged.updatedAt = Date.now();
           var lastC = merged.commentairesRegie[merged.commentairesRegie.length - 1];
-          notifyAdmin('💬 Message de ' + who.regie + ' : ' + nomComplet(merged), lastC ? lastC.txt : '');
+          if (nDocs > 0) notifyAdmin('📎 ' + who.regie + ' a envoyé ' + nDocs + ' document(s) : ' + nomComplet(merged), 'Documents à voir dans la fiche du client (onglet Régie).');
+          else if (JSON.stringify(merged.commentairesRegie) !== JSON.stringify(stored.commentairesRegie || [])) notifyAdmin('💬 Message de ' + who.regie + ' : ' + nomComplet(merged), lastC ? lastC.txt : '');
         } else {
           var tel9 = normTel(inc.tel).slice(-9);
           var dup = tel9 && readAll().filter(function (r) { return !r.data._deleted && normTel(r.data.tel).slice(-9) === tel9; })[0];
@@ -231,13 +238,14 @@ function actionPush(who, records) {
           if (dup) { merged.aVerifier = true; merged.notes = '⚠️ Doublon possible : même téléphone que « ' + nomComplet(dup.data) + ' » (déjà dans le CRM, source ' + (dup.data.source || '?') + ').'; }
           notifyAdmin('📥 Nouveau client de la régie ' + who.regie + ' : ' + nomComplet(merged), 'Tél : ' + (merged.tel || '') + ' · ' + (merged.cp || '') + ' ' + (merged.ville || '') + ' · ' + (merged.produit || '') + (dup ? '\n⚠️ Doublon possible avec ' + nomComplet(dup.data) : ''));
         }
-      } else if (who.role === 'poseur') {
+      } else if (who.role === 'poseur' || asPoseur) {
         if (!stored || !visibleForPoseur(stored, who.poseur)) return;
         merged = JSON.parse(JSON.stringify(stored));
+        if (asPoseur) { merged.commentairesRegie = mergeComments(stored.commentairesRegie, inc.commentairesRegie); mergeDocsRegie(merged, stored, inc, who.regie); }
         POSEUR_WRITABLE.forEach(function (k) { if (inc[k] !== undefined) merged[k] = inc[k]; });
         // un poseur ne peut que passer le chantier à « Installé »
         if (Number(inc.etape) !== Number(stored.etape)) merged.etape = (Number(inc.etape) === 8 && Number(stored.etape) <= 8) ? 8 : stored.etape;
-        merged.photos = mergePhotos(stored.photos, inc.photos);
+        merged.photos = mergePhotos(merged.photos, (inc.photos || []).filter(function (p) { return p && DOC_KINDS.indexOf(p.kind) < 0; }));
         merged.updatedAt = Math.max(Number(inc.updatedAt) || 0, Number(stored.updatedAt) || 0);
       } else {
         if (stored && Number(stored.updatedAt) > Number(inc.updatedAt)) {
@@ -253,8 +261,8 @@ function actionPush(who, records) {
         }
       }
       writeRecord(sh, index, merged);
-      returned.push(who.role === 'poseur' ? stripForPoseur(merged) : who.role === 'regie' ? stripForRegie(merged) : merged);
-      if (who.role === 'poseur' && stored && Number(merged.etape) === 8 && Number(stored.etape) < 8) notifyAdmin('✅ Chantier terminé : ' + nomComplet(merged), who.poseur + ' a déclaré le chantier de ' + nomComplet(merged) + ' terminé.\nPhotos après : ' + countPhotos(merged, 'apres') + '\nSatisfaction : ' + (merged.satisfaction && merged.satisfaction.note ? merged.satisfaction.note + '/5' : 'non remplie'));
+      returned.push(who.role === 'poseur' ? stripForPoseur(merged) : who.role === 'regie' ? stripRegiePoseur(merged, who) : merged);
+      if ((who.role === 'poseur' || asPoseur) && stored && Number(merged.etape) === 8 && Number(stored.etape) < 8) notifyAdmin('✅ Chantier terminé : ' + nomComplet(merged), who.poseur + ' a déclaré le chantier de ' + nomComplet(merged) + ' terminé.\nPhotos après : ' + countPhotos(merged, 'apres') + '\nSatisfaction : ' + (merged.satisfaction && merged.satisfaction.note ? merged.satisfaction.note + '/5' : 'non remplie'));
     });
     return {records: returned};
   } finally { lock.releaseLock(); }
@@ -262,14 +270,19 @@ function actionPush(who, records) {
 
 function actionUpload(who, req) {
   var folder = DriveApp.getFolderById(PropertiesService.getScriptProperties().getProperty('PHOTOS_ID'));
-  if (who.role === 'regie') throw new Error('Non autorisé');
   var d = findRecord(req.dossierId);
+  if (who.role === 'regie') {
+    var okDoc = d && visibleForRegie(d, who.regie) && DOC_KINDS.indexOf(req.kind) >= 0;
+    var okPose = d && who.poseur && visibleForPoseur(d, who.poseur);
+    if (!okDoc && !okPose) throw new Error('Non autorisé');
+  }
   if (who.role === 'poseur' && (!d || !visibleForPoseur(d, who.poseur))) throw new Error('Chantier non autorisé');
   var sub = clientFolder(folder, d ? nomComplet(d) + ' — ' + (d.ville || d.cp || '') : 'Divers');
+  if (/^data:application\/pdf/.test(String(req.full)) && DOC_KINDS.indexOf(req.kind) < 0) throw new Error('PDF accepté seulement pour les documents');
   var full = dataUrlToBlob(req.full, (req.kind || 'photo') + '_' + Utilities.formatDate(new Date(), 'Europe/Paris', 'yyyyMMdd_HHmmss') + extOf(req.full));
   var f = sub.createFile(full);
   var thumbId = f.getId();
-  if (req.thumb && req.thumb !== req.full) {
+  if (req.thumb && req.thumb !== req.full && /^data:image/.test(req.thumb)) {
     var t = sub.createFile(dataUrlToBlob(req.thumb, 'mini_' + f.getName()));
     thumbId = t.getId();
   }
@@ -277,7 +290,7 @@ function actionUpload(who, req) {
 }
 
 function actionFile(who, id) {
-  if (who.role === 'regie') throw new Error('Non autorisé');
+  if (who.role === 'regie' && !who.poseur) throw new Error('Non autorisé');
   var f = DriveApp.getFileById(id);
   var root = PropertiesService.getScriptProperties().getProperty('PHOTOS_ID');
   var p = f.getParents(); var ok = false;
@@ -619,7 +632,7 @@ function visibleForPoseur(d, poseur) {
 }
 /* ----- Régies : chacune ne voit que ses clients, sans les montants (sauf sa commission) ----- */
 var REGIE_FIELDS = ['id', 'nom', 'prenom', 'tel', 'email', 'adresse', 'cp', 'ville', 'produit', 'etape', 'createdAt', 'updatedAt', 'source', 'regie', 'pv', 'historique',
-  'statutDevis', 'dateEnvoiDevis', 'dateSignatureDevis', 'datePose', 'dateInstallation', 'motifKO', 'commission', 'commissionPayeeLe', 'commentairesRegie', 'chauffage', 'surface', 'proprietaire', '_deleted'];
+  'docsDemandes', 'statutDevis', 'dateEnvoiDevis', 'dateSignatureDevis', 'datePose', 'dateInstallation', 'motifKO', 'commission', 'commissionPayeeLe', 'commentairesRegie', 'chauffage', 'surface', 'proprietaire', '_deleted'];
 var REGIE_CREATE = ['nom', 'prenom', 'tel', 'email', 'adresse', 'cp', 'ville', 'produit', 'chauffage', 'surface', 'proprietaire'];
 function visibleForRegie(d, regie) {
   if (!d || d._deleted) return false;
@@ -645,7 +658,33 @@ function actionRegieDel(nom) {
   for (var i = v.length - 1; i >= 1; i--) if (String(v[i][0]).indexOf('REGIE_') === 0 && keyNom(String(v[i][0]).slice(6)) === keyNom(nom)) sh.deleteRow(i + 1);
   CacheService.getScriptCache().remove('cfg'); return {ok: true};
 }
-function stripForRegie(d) { var o = {}; REGIE_FIELDS.forEach(function (k) { if (d[k] !== undefined) o[k] = d[k]; }); return o; }
+function stripForRegie(d) {
+  var o = {}; REGIE_FIELDS.forEach(function (k) { if (d[k] !== undefined) o[k] = d[k]; });
+  o.photos = (d.photos || []).filter(function (p) { return p && DOC_KINDS.indexOf(p.kind) >= 0; }).map(function (p) { return {id: p.id, kind: p.kind, label: p.label, name: p.name, pdf: p.pdf, t: p.t, by: p.by, del: p.del, pending: p.pending && !p.fileId}; });
+  return o;
+}
+var DOC_KINDS = ['cni', 'avis', 'taxe', 'facture', 'autredoc'];
+/* régie qui est aussi poseur (ex. Igor) : fiche régie + fiche chantier pour ses poses */
+function stripRegiePoseur(d, who) {
+  var vr = visibleForRegie(d, who.regie), vp = who.poseur && visibleForPoseur(d, who.poseur);
+  var o = vr ? stripForRegie(d) : {id: d.id, updatedAt: d.updatedAt};
+  if (vp) { var docs = o.photos || []; var ps = stripForPoseur(d); Object.keys(ps).forEach(function (k) { o[k] = ps[k]; }); if (vr) o.photos = mergePhotos(ps.photos, docs); o._pose = true; }
+  if (vr) o._regie = true;
+  return o;
+}
+/* documents envoyés par la régie : seulement les types de documents, jamais les autres pièces */
+function mergeDocsRegie(merged, stored, inc, regie) {
+  var avant = (stored.photos || []).filter(function (p) { return DOC_KINDS.indexOf(p.kind) >= 0; }).map(function (p) { return p.id; });
+  var docs = (inc.photos || []).filter(function (p) { return p && p.id && DOC_KINDS.indexOf(p.kind) >= 0 && avant.indexOf(p.id) < 0; })
+    .map(function (p) { return {id: clean(p.id), kind: p.kind, label: clean(p.label), name: clean(p.name), pdf: !!p.pdf, t: Number(p.t) || Date.now(), by: regie, pending: !!p.pending, fileId: clean(p.fileId), thumbId: clean(p.thumbId), url: clean(p.url)}; });
+  // mise à jour d'un document déjà connu (fichier arrivé sur le Drive)
+  var maj = (inc.photos || []).filter(function (p) { return p && avant.indexOf(p.id) >= 0 && p.fileId && !(stored.photos || []).some(function (q) { return q.id === p.id && q.fileId; }); }).map(function (p) { return {id: p.id, fileId: clean(p.fileId), thumbId: clean(p.thumbId), url: clean(p.url), pending: false}; });
+  if (!docs.length && !maj.length) return 0;
+  merged.photos = mergePhotos(stored.photos, docs.concat(maj));
+  var recus = merged.photos.filter(function (p) { return !p.del && DOC_KINDS.indexOf(p.kind) >= 0; }).map(function (p) { return p.kind; });
+  if (merged.docsDemandes) merged.docsDemandes = merged.docsDemandes.filter(function (k) { return recus.indexOf(k) < 0; });
+  return docs.length || -1;
+}
 function mergeComments(a, b) {
   var m = {}; (a || []).concat(b || []).forEach(function (c) { if (!c || !c.t || !c.txt) return; m[c.t + '|' + String(c.txt).slice(0, 40)] = {t: Number(c.t), by: clean(c.by), txt: String(c.txt).slice(0, 2000)}; });
   return Object.keys(m).map(function (k) { return m[k]; }).sort(function (x, y) { return x.t - y.t; });
@@ -679,7 +718,7 @@ function getConfig() {
 }
 function clientFolder(root, name) { name = name.replace(/[\\\/:*?"<>|]/g, ' ').trim().slice(0, 80); var it = root.getFoldersByName(name); return it.hasNext() ? it.next() : root.createFolder(name); }
 function dataUrlToBlob(dataUrl, name) { var m = String(dataUrl).match(/^data:([^;]+);base64,(.*)$/); if (!m) throw new Error('Image invalide'); return Utilities.newBlob(Utilities.base64Decode(m[2]), m[1], name); }
-function extOf(dataUrl) { return /image\/png/.test(dataUrl) ? '.png' : '.jpg'; }
+function extOf(dataUrl) { return /^data:application\/pdf/.test(dataUrl) ? '.pdf' : /image\/png/.test(dataUrl) ? '.png' : '.jpg'; }
 function notifyAdmin(subject, body) { try { var to = getConfig().EMAIL_ALERTES; if (to) MailApp.sendEmail(to, subject, body); } catch (e) { Logger.log(e); } }
 function randomCode(len) { var c = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789', s = ''; for (var i = 0; i < len; i++) s += c.charAt(Math.floor(Math.random() * c.length)); return s; }
 function randomPin() { return String(Math.floor(100000 + Math.random() * 900000)); }
