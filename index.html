@@ -361,9 +361,13 @@ function photosOf(d,kind){ return (d.photos||[]).filter(p=>p.kind===kind && !p.d
 
 const CRM_START = new Date("2026-11-06T00:00:00").getTime();
 function poseApresCRM(d){ const t=new Date(d.dateInstallation||d.datePose||0).getTime(); return t>=CRM_START; }
+/* Écrêtement MaPrimeRénov' (rénovation par geste) : MPR + CEE ne peuvent pas dépasser ce % du prix TTC */
+const ECRETEMENT={bleu:.9,jaune:.75,violet:.6,rose:.4};
+function plafondAides(d){ const c=couleurOf(d); const t=num(d.devisTTC); if(!c||!t||!ECRETEMENT[c]) return null; return {c,taux:ECRETEMENT[c],max:Math.round(t*ECRETEMENT[c]),racMin:Math.round(t*(1-ECRETEMENT[c]))}; }
 function alertsFor(d){
   const a=[]; const e=Number(d.etape);
   if(e===0) return a;
+  { const p=plafondAides(d); const aides=num(d.valoCEE)+num(d.valoMPR); if(p && num(d.valoMPR)>0 && aides>p.max+1 && e>=3 && e<=7) a.push({lvl:"danger",t:"Aides trop hautes : "+eur(aides)+" > "+Math.round(p.taux*100)+" % du TTC ("+eur(p.max)+", client "+p.c+"). Reste à charge minimum : "+eur(p.racMin)}); }
   if(d.aVerifier){
     if(e===10 && resteAEncaisser(d)>0 && daysSince(d.dateDemandeSolde)>=30) a.push({lvl:"danger",t:"Solde demandé il y a "+daysSince(d.dateDemandeSolde)+" j — "+eur(resteAEncaisser(d))+" à encaisser"});
     ordreDates(d).forEach(t=>a.push({lvl:"danger",t:"Dates dans le mauvais ordre : "+t}));
