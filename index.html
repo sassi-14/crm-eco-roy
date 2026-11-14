@@ -2124,6 +2124,13 @@ document.addEventListener("input",e=>{ if(e.target.id==="rq"){ S.rq=e.target.val
 const IRIS_SUGG=["Je fais quoi aujourd'hui ?","Devis à relancer","Poses de la semaine","Combien il reste à encaisser ?","Comment ça marche le CRM ?"];
 const nrm=s=>String(s||"").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^a-z0-9@.' -]/g," ").replace(/\s+/g," ").trim();
 const IRIS_HOW=[
+  [/(document|cni|avis d.impot|piece)/,"📎 <b>Demander un document à une régie</b> : fiche client → onglet <b>💬 Régie</b> → rubrique Documents → clique le document à demander. Elle le voit et l'envoie en PDF ou photo.",null],
+  [/(regie|apporteur)/,"🤝 <b>Nouvelle régie</b> : Réglages → <b>« Gérer les accès des régies »</b> → tape son nom → <b>Créer</b> (le PIN se crée tout seul) → <b>« Copier le message d'accès »</b> et envoie-le par WhatsApp. Pour lui rattacher un client : mets son nom exact dans « Régie / apporteur » sur la fiche.",["reglages","","Ouvrir Réglages"]],
+  [/(revolut|releve|virement)/,"🏦 <b>Relevé Revolut</b> : exporte ton relevé en CSV depuis Revolut, puis Réglages → <b>« Importer un relevé Revolut »</b>. Le CRM propose un client pour chaque virement reçu (Drapo, Anah, Sofinco, client) ; tu vérifies et tu cliques « Enregistrer ».",["reglages","","Ouvrir Réglages"]],
+  [/(compta|comptable|export|excel)/,"📊 <b>Export comptable</b> : Réglages → <b>« Export pour le comptable »</b>, choisis les dates, et tu obtiens un fichier Excel avec factures, aides, encaissements et coûts.",["reglages","","Ouvrir Réglages"]],
+  [/(plafond|ecretement|90 ?%|reste a charge min)/,"🛑 <b>Plafond des aides (par geste)</b> : MaPrimeRénov' + CEE ne peuvent pas dépasser <b>90 %</b> du TTC pour un bleu, <b>75 %</b> jaune, <b>60 %</b> violet, <b>40 %</b> rose. Le client paie donc au moins 10 % (bleu). Le CRM met une alerte rouge si un dossier dépasse.",null],
+  [/(stripe|lien de paiement|abonnement|paiement entretien)/,"💳 <b>Lien de paiement entretien</b> : sur la fiche du client (partie Suivi), clique <b>« 💳 Essentiel / Sérénité / Premium »</b> : le lien est copié, colle-le au client. Les liens se règlent dans Réglages → « Liens de paiement entretien ».",null],
+  [/(bloque|bloquant|probleme)/,"🚨 <b>Dossiers bloqués</b> : ils sont dans la colonne rouge <b>« Bloquants »</b> de l'Accueil, avec la raison. Clique la carte pour ouvrir le dossier.",["dash","","Ouvrir l'Accueil"]],
   [/(signe|signature)/,"✍️ <b>Client qui signe</b> : va dans Dossiers → onglet <b>4. Devis envoyés</b>, et clique le bouton vert <b>« Signé »</b> sur le client. Il passe en « Dossier aides ».",["pipeline","e4","Ouvrir Devis envoyés"]],
   [/(perdu|mort|refus)/,"✖ <b>Client perdu</b> : clique <b>« Perdu »</b> sur sa ligne et choisis le motif. Perdu = on ne le recontacte plus. S'il n'est juste pas prêt, clique plutôt <b>« Plus tard »</b> (suivi long terme).",null],
   [/(nrp|repond pas|pas repondu|injoignable)/,"🔕 <b>Pas de réponse</b> : clique <b>« Pas répondu »</b>. Le compteur NRP monte ; au 4e, le client part tout seul en suivi long terme.",["pipeline","e2","Ouvrir À appeler"]],
@@ -2183,6 +2190,7 @@ function irisRepond(q){
     if(hits.length===1){ const d=hits[0]; return `J'ai trouvé <b>${esc(fullName(d))}</b> :<br>• Étape : <b>${esc(etapeLabel(d.etape))}</b><br>• ${esc([d.produit,d.ville||d.cp,srcKey(d)].filter(Boolean).join(" · "))}${d.tel?"<br>• 📞 "+esc(d.tel):""}${d.email?"<br>• ✉️ "+esc(d.email):""}${resteAEncaisser(d)?"<br>• Reste à encaisser : "+eur(resteAEncaisser(d)):""}<div class="iris-list">${irisClient(d)}</div>`; }
     if(hits.length>1) return `${hits.length} clients correspondent${hits.length>10?" (les 10 premiers)":""} :<div class="iris-list">${hits.slice(0,10).map(irisClient).join("")}</div>`;
   }
+  for(const [re,txt,go] of IRIS_HOW) if(re.test(t)) return txt+(go?irisGo(go[0],go[1],go[2]):"");
   return `Je n'ai pas compris 🙈. Essaie un <b>nom de client</b>, une <b>ville</b>, un <b>numéro</b>, ou une de ces questions :`;
 }
 function irisAdd(who,html){ const box=$("#irisMsgs"); if(!box) return; const m=document.createElement("div"); m.className="iris-m "+who; m.innerHTML=html; box.appendChild(m); box.scrollTop=box.scrollHeight; }
