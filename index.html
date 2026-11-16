@@ -109,6 +109,17 @@ h3{font-size:14px;margin:0 0 8px;color:var(--muted);font-weight:600;text-transfo
 .iris-c span{font-size:12px;opacity:.75}
 .iris-go{display:table;margin-top:8px;border:0;background:var(--brand);color:#fff;border-radius:8px;padding:6px 10px;font-size:13px;font-weight:600;cursor:pointer}
 .iris-sugg{display:flex;flex-wrap:wrap;gap:6px}
+.iris-menu{display:grid;gap:10px;width:100%}
+.iris-menu h4{margin:0 0 4px;font-size:12px;opacity:.75;font-weight:700}
+.iris-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.iris-grid button,.iris-grid a{border:1px solid var(--line);background:var(--card);color:inherit;border-radius:8px;padding:7px 8px;font-size:12.5px;text-align:left;cursor:pointer;text-decoration:none;line-height:1.25}
+.iris-card{display:grid;gap:6px;width:100%}
+.iris-card .qtri{display:flex;flex-wrap:wrap;gap:5px}
+.iris-card .qtri button,.iris-card .ia{border:1px solid var(--line);background:var(--card);color:inherit;border-radius:8px;padding:5px 8px;font-size:12.5px;cursor:pointer;text-decoration:none}
+.iris-card .qtri button.go{background:var(--accent);border-color:var(--accent);color:#fff}
+.iris-card form{display:flex;gap:5px}.iris-card form input{flex:1;min-width:0;font-size:13px;padding:5px 8px}
+.iris-c-row{display:flex;gap:4px;align-items:stretch}.iris-c-row .iris-c{flex:1}
+.iris-act{border:1px solid var(--line);background:var(--brand-soft);color:inherit;border-radius:8px;padding:0 8px;cursor:pointer;font-size:13px}
 .iris-sugg button{border:1px solid var(--line);background:var(--card);color:inherit;border-radius:99px;padding:5px 10px;font-size:12px;cursor:pointer}
 .iris-f{display:flex;gap:6px;padding:8px;border-top:1px solid var(--line)}
 .iris-f input{flex:1;min-width:0}
@@ -2212,7 +2223,21 @@ const IRIS_HOW=[
   [/(synchro|sauvegard|hors ligne|internet)/,"🔄 <b>Synchro</b> : tout est enregistré sur l'appareil puis envoyé au serveur dès qu'il y a internet. Le point vert en haut à droite = à jour.",null],
   [/(installer|appli|icone|bureau)/,"📲 <b>Installer le CRM</b> : dans Chrome, icône « Installer » dans la barre d'adresse (ordi) ou menu ⋮ → « Ajouter à l'écran d'accueil » (téléphone).",null],
 ];
-function irisClient(d){ return `<button class="iris-c" data-open="${esc(d.id)}"><b>${esc(fullName(d))}</b><span>${esc([d.ville||d.cp,etapeLabel(d.etape)].filter(Boolean).join(" · "))}${d.tel?" · "+esc(d.tel):""}</span></button>`; }
+function irisClient(d){ return `<div class="iris-c-row"><button class="iris-act" data-iris-client="${esc(d.id)}" title="Actions">⚡</button><button class="iris-c" data-open="${esc(d.id)}"><b>${esc(fullName(d))}</b><span>${esc([d.ville||d.cp,etapeLabel(d.etape)].filter(Boolean).join(" · "))}${d.tel?" · "+esc(d.tel):""}</span></button></div>`; }
+function irisCard(d){
+  const tel=String(d.tel||"").replace(/[^\d+]/g,"");
+  return `<div class="iris-card"><div><b>${esc(fullName(d))}</b><br><span class="small">Étape : <b>${esc(etapeLabel(d.etape))}</b>${d.ville||d.cp?" · "+esc(d.ville||d.cp):""}${d.devisTTC?" · devis "+eur(d.devisTTC):""}${resteAEncaisser(d)?" · reste "+eur(resteAEncaisser(d)):""}</span></div>
+  <div class="qtri"><button class="ia" data-open="${esc(d.id)}">📂 Ouvrir la fiche</button>${tel?`<a class="ia" href="tel:${esc(tel)}" data-stop="1">📞 ${esc(d.tel)}</a>`:""}<button data-mact="qtri" data-id="${esc(d.id)}" data-v="mail">✉️ Mail / SMS / WhatsApp</button></div>
+  ${triButtons(d)}
+  <form data-iris-note="${esc(d.id)}"><input type="text" placeholder="📝 Ajouter une note…" aria-label="Note"><button class="ia" type="submit">OK</button></form></div>`;
+}
+function irisMenu(){
+  const B=(attrs,l)=>`<button ${attrs}>${l}</button>`, Q=q=>B(`data-iris="${esc(q)}"`,q);
+  return `<div class="iris-menu">
+  <div><h4>Aujourd'hui</h4><div class="iris-grid">${Q("Je fais quoi aujourd'hui ?")}${Q("Leads à rappeler")}${Q("Devis à relancer")}${Q("Poses de la semaine")}${Q("Dossiers bloqués")}${Q("Combien il reste à encaisser ?")}</div></div>
+  <div><h4>Créer et gérer</h4><div class="iris-grid">${B('data-act="new"',"➕ Nouveau dossier")}${B('data-nav="pipeline" data-filter="trier"',"🧺 Fiches à trier")}${B('data-nav="planning"',"📅 Planning des poses")}${B('data-nav="carte"',"🗺️ Carte des clients")}${B('data-nav="finances"',"💶 Gestion et paiements")}${B('data-act="exportcompta"',"📊 Export comptable")}${B('data-nav="reglages"',"📆 Mes dates de pose dispo")}${B('data-nav="reglages"',"⚙️ Réglages et messages")}</div></div>
+  <div><h4>Un client</h4><div class="small">Tape son nom, sa ville ou son numéro en bas, puis ⚡ pour agir sans ouvrir la fiche : changer d'étape, mail, note, appel.</div></div></div>`;
+}
 function irisGo(nav,filter,label){ return `<button class="iris-go" data-nav="${nav}"${filter?` data-filter="${filter}"`:""}>${esc(label)} →</button>`; }
 function irisRepond(q){
   const t=nrm(q); const all=actifs(); const t0=today();
@@ -2221,7 +2246,7 @@ function irisRepond(q){
     return `Je suis <b>Iris</b>, je t'aide à te retrouver dans le CRM.<br><br>Le CRM suit chaque client en <b>3 parties</b> :<br>1 · <b>Vendre</b> (lead → appel → devis)<br>2 · <b>Monter & poser</b> (dossier aides → planif → pose)<br>3 · <b>Encaisser</b> (facture → paiements → soldé)<br><br>Sur chaque client, le <b class="vert">bouton vert</b> = étape suivante.<br><br>Tu peux me demander : un nom de client, « je fais quoi aujourd'hui », « devis à relancer », « comment je mets un client en signé », « c'est quoi Dossier aides »…`;
   if(!/comment/.test(t) && /(aujourd|fais quoi|a faire|priorit|urgent|en retard|ma journee|to do|todo)/.test(t)){
     const T=tachesAgenda().filter(x=>x.date && x.date<=t0).sort((a,b)=>a.date.localeCompare(b.date));
-    if(!T.length) return "Rien en retard ni prévu aujourd'hui. 👌 Regarde les leads à rappeler ou les devis à relancer."+irisGo("pipeline","leads","Leads à rappeler");
+    if(!T.length) return "Rien en retard ni prévu aujourd'hui. 👌 Regarde les leads à rappeler ou les devis à relancer."+irisGo("pipeline","e1","Leads à rappeler");
     const par={}; T.forEach(x=>par[x.txt.split(" ·")[0]]=(par[x.txt.split(" ·")[0]]||0)+1);
     return `<b>${T.length} tâche${T.length>1?"s":""}</b> pour aujourd'hui ou en retard :<br>${Object.entries(par).map(([k,n])=>`• ${esc(k)} : ${n}`).join("<br>")}<div class="iris-list">${T.slice(0,8).map(x=>`<button class="iris-c" data-open="${esc(x.d.id)}"><b>${x.ic} ${esc(fullName(x.d))}</b><span>${esc(x.txt)}${x.date<t0?" · en retard depuis le "+fmtDate(x.date):""}</span></button>`).join("")}</div>${irisGo("planning","","Tout voir dans le Planning")}`;
   }
@@ -2237,9 +2262,13 @@ function irisRepond(q){
     const fin=addJ(t0,7); const P=all.filter(d=>d.datePose && d.datePose>=t0 && d.datePose<=fin && [6,7].includes(Number(d.etape))).sort((a,b)=>a.datePose.localeCompare(b.datePose));
     return P.length?`🛠️ <b>${P.length} pose${P.length>1?"s":""}</b> dans les 7 jours :<div class="iris-list">${P.map(d=>`<button class="iris-c" data-open="${esc(d.id)}"><b>${fmtDate(d.datePose)} · ${esc(fullName(d))}</b><span>${esc(d.poseur||"⚠ sans poseur")} · ${esc(d.ville||d.cp||"")} · ${esc(d.produit||"")}</span></button>`).join("")}</div>${irisGo("planning","","Ouvrir le planning")}`:"Aucune pose prévue dans les 7 prochains jours."+irisGo("pipeline","e6","Voir les clients à planifier");
   }
-  if(/devis/.test(t) && /(relanc|attente|sans reponse|en cours|envoye)/.test(t)){
-    const D=all.filter(d=>Number(d.etape)===4).map(d=>({d,j:daysSince(d.dateRelanceDevis||d.dateEnvoiDevis)})).filter(x=>x.j==null||x.j>=3).sort((a,b)=>(b.j||0)-(a.j||0));
-    return `📄 <b>${D.length} devis</b> à relancer (envoyés ou relancés il y a 3 jours ou plus) :<div class="iris-list">${D.slice(0,8).map(x=>`<button class="iris-c" data-open="${esc(x.d.id)}"><b>${esc(fullName(x.d))}</b><span>${x.d.devisTTC?eur(x.d.devisTTC)+" · ":""}${x.j!=null?"il y a "+x.j+" j":"date inconnue"}${x.d.tel?" · "+esc(x.d.tel):""}</span></button>`).join("")}</div>Après l'appel, clique <b>« Relancé aujourd'hui »</b> sur sa ligne.${irisGo("pipeline","e4","Ouvrir Devis envoyés")}`;
+  if(/lead/.test(t) && /(rappel|appel|nouveau|repondu)/.test(t)){
+    const L=all.filter(d=>[1,2].includes(Number(d.etape))).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+    return `📞 <b>${L.length} lead${L.length>1?"s":""}</b> à appeler ou rappeler (les plus récents d'abord). Touche ⚡ pour agir :<div class="iris-list">${L.slice(0,10).map(irisClient).join("")}</div>${irisGo("pipeline","e1","Voir tous les leads")}`;
+  }
+  if(/devis/.test(t) && /(relanc|attente|sans reponse|en cours|envoye|rappel)/.test(t)){
+    const D=all.filter(d=>Number(d.etape)===4 && d.statutDevis!=="Refusé" && !Number(d.nbRelancesDevis)).map(d=>({d,j:daysSince(d.dateEnvoiDevis)})).filter(x=>x.j==null||x.j>=7).sort((a,b)=>(b.j||0)-(a.j||0));
+    return `📄 <b>${D.length} devis</b> envoyés il y a 7 jours ou plus, sans petit rappel encore (un seul rappel par devis). Touche ⚡ puis « Petit rappel » :<div class="iris-list">${D.slice(0,10).map(x=>irisClient(x.d)).join("")}</div>${irisGo("pipeline","e4","Ouvrir Devis envoyés")}`;
   }
   // Explication d'une étape
   const et=ETAPES_UI.find(x=>{ const l=nrm(x.l); return t.includes(l) || l.split(" ").filter(w=>w.length>4).some(w=>t.includes(w)&&/(c'est quoi|etape|onglet|ca veut dire|signifie|quoi)/.test(t)); });
@@ -2254,7 +2283,8 @@ function irisRepond(q){
   const mots=t.replace(/\b(ou est|ou en est|trouve|cherche|client|fiche|dossier|de|la|le|les|du|mr|mme|madame|monsieur|m|mr\.)\b/g," ").split(" ").filter(w=>w.length>=3 || /\d{4,}/.test(w));
   if(mots.length){
     const hits=all.map(d=>{ const hay=nrm([d.nom,d.prenom,d.ville,d.cp,d.email].join(" "))+" "+String(d.tel||"").replace(/\D/g,""); const sc=mots.filter(w=>hay.includes(w.replace(/\s/g,""))).length; return {d,sc}; }).filter(x=>x.sc===mots.length).map(x=>x.d);
-    if(hits.length===1){ const d=hits[0]; return `J'ai trouvé <b>${esc(fullName(d))}</b> :<br>• Étape : <b>${esc(etapeLabel(d.etape))}</b><br>• ${esc([d.produit,d.ville||d.cp,srcKey(d)].filter(Boolean).join(" · "))}${d.tel?"<br>• 📞 "+esc(d.tel):""}${d.email?"<br>• ✉️ "+esc(d.email):""}${resteAEncaisser(d)?"<br>• Reste à encaisser : "+eur(resteAEncaisser(d)):""}<div class="iris-list">${irisClient(d)}</div>`; }
+    if(hits.length===1) return irisCard(hits[0]);
+    if(false){ const d=hits[0]; return `J'ai trouvé <b>${esc(fullName(d))}</b> :<br>• Étape : <b>${esc(etapeLabel(d.etape))}</b><br>• ${esc([d.produit,d.ville||d.cp,srcKey(d)].filter(Boolean).join(" · "))}${d.tel?"<br>• 📞 "+esc(d.tel):""}${d.email?"<br>• ✉️ "+esc(d.email):""}${resteAEncaisser(d)?"<br>• Reste à encaisser : "+eur(resteAEncaisser(d)):""}<div class="iris-list">${irisClient(d)}</div>`; }
     if(hits.length>1) return `${hits.length} clients correspondent${hits.length>10?" (les 10 premiers)":""} :<div class="iris-list">${hits.slice(0,10).map(irisClient).join("")}</div>`;
   }
   for(const [re,txt,go] of IRIS_HOW) if(re.test(t)) return txt+(go?irisGo(go[0],go[1],go[2]):"");
@@ -2267,10 +2297,15 @@ function irisInit(){
   if($("#irisBtn")) return;
   const b=document.createElement("button"); b.id="irisBtn"; b.className="iris-fab"; b.setAttribute("aria-label","Aide"); b.innerHTML="💬<span>Aide</span>"; document.body.appendChild(b);
   const p=document.createElement("div"); p.id="iris"; p.className="iris-panel"; p.hidden=true;
-  p.innerHTML=`<div class="iris-h"><div><b>Iris</b> <span class="small muted">· aide du CRM</span></div><button class="iris-x" aria-label="Fermer">✕</button></div><div id="irisMsgs" class="iris-msgs"></div><form id="irisForm" class="iris-f"><input id="irisIn" type="text" placeholder="Un nom, une question…" autocomplete="off"><button class="btn primary" type="submit">➤</button></form>`;
+  p.innerHTML=`<div class="iris-h"><div><b>Iris</b> <span class="small muted">· tout le CRM ici</span></div><div><button class="iris-x" data-iris-menu="1" aria-label="Menu" title="Menu">☰</button><button class="iris-x" aria-label="Fermer">✕</button></div></div><div id="irisMsgs" class="iris-msgs"></div><form id="irisForm" class="iris-f"><input id="irisIn" type="text" placeholder="Un nom, une question…" autocomplete="off"><button class="btn primary" type="submit">➤</button></form>`;
   document.body.appendChild(p);
-  b.addEventListener("click",()=>{ p.hidden=!p.hidden; if(!p.hidden){ if(!$("#irisMsgs").children.length){ irisAdd("iris","Salut 👋 Je suis <b>Iris</b>. Dis-moi un nom de client ou pose-moi une question sur le CRM."); irisSugg(); } setTimeout(()=>$("#irisIn").focus(),50); } });
-  p.querySelector(".iris-x").addEventListener("click",()=>{ p.hidden=true; });
+  b.addEventListener("click",()=>{ p.hidden=!p.hidden; if(!p.hidden){ if(!$("#irisMsgs").children.length){ irisAdd("iris","Salut 👋 Je suis <b>Iris</b>. Choisis une action, ou tape un nom de client en bas."); irisAdd("iris",irisMenu()); } setTimeout(()=>$("#irisIn").focus(),50); } });
+  p.querySelector(".iris-x:not([data-iris-menu])").addEventListener("click",()=>{ p.hidden=true; });
+  p.querySelector("[data-iris-menu]").addEventListener("click",()=>{ irisAdd("iris",irisMenu()); });
+  p.addEventListener("submit",async ev=>{ const f=ev.target.closest("[data-iris-note]"); if(!f) return; ev.preventDefault(); const d=S.dossiers.get(f.dataset.irisNote); const v=f.querySelector("input").value.trim(); if(!d||!v) return;
+    d.notes=((d.notes||"")+"\n["+new Date().toLocaleDateString("fr-FR")+"] "+v).trim(); await saveDossier(d); f.querySelector("input").value=""; irisAdd("iris","📝 Note ajoutée sur <b>"+esc(fullName(d))+"</b>."); });
+  p.addEventListener("click",ev=>{ const c=ev.target.closest("[data-iris-client]"); if(c){ ev.stopPropagation(); const d=S.dossiers.get(c.dataset.irisClient); if(d) irisAdd("iris",irisCard(d)); return; }
+    const q=ev.target.closest(".iris-card [data-mact='qtri']"); if(q){ const id=q.dataset.id, v=q.dataset.v; if(!["mail","perdu","rappeldevis"].includes(v)) setTimeout(()=>{ const d=S.dossiers.get(id); if(d) irisAdd("iris","✓ C'est fait. "+irisCard(d)); },700); } });
   $("#irisForm").addEventListener("submit",ev=>{ ev.preventDefault(); const i=$("#irisIn"); const q=i.value.trim(); if(!q) return; i.value=""; irisAsk(q); });
   p.addEventListener("click",ev=>{ const s=ev.target.closest("[data-iris]"); if(s){ ev.stopPropagation(); irisAsk(s.dataset.iris); return; } if(ev.target.closest("[data-open],[data-nav]") && window.innerWidth<760) p.hidden=true; });
 }
