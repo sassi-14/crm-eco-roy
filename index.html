@@ -776,7 +776,7 @@ function viewDash(){
   const cartes={};
   for(const c of COLS){ if(!c.types) continue; cartes[c.k]=T.filter(x=>c.types.includes(x.type) && (!c.jusqua || !x.date || x.date<=c.jusqua)).map(x=>({d:x.d,txt:x.txt,ic:x.ic,date:x.date})); }
   // Devis : à relancer si envoyé / relancé il y a 3 jours ou plus
-  cartes.devis=live.filter(d=>Number(d.etape)===4 && d.statutDevis!=="Refusé").map(d=>{ const last=d.dateRelanceDevis||d.dateEnvoiDevis; const nb=Number(d.nbRelancesDevis)||0; return {d,txt:(nb?"Relance n°"+(nb+1):"Relancer le devis")+(d.devisTTC?" · "+eur(d.devisTTC):""),ic:"📄",date:last?addJ(last,3):""}; }).filter(x=>!x.date||x.date<=t0);
+  cartes.devis=live.filter(d=>Number(d.etape)===4 && d.statutDevis!=="Refusé").map(d=>{ const last=d.dateEnvoiDevis; return {d,txt:"Petit rappel du devis (1 seule fois)"+(d.devisTTC?" · "+eur(d.devisTTC):""),ic:"📄",date:last?addJ(last,7):""}; }).filter(x=>!Number(x.d.nbRelancesDevis)&&(!x.date||x.date<=t0));
   // Rappels de pose : J-3 confirmation au client, J-1 rappel de la veille (message préparé, envoyé par toi)
   live.filter(d=>Number(d.etape)>=6&&Number(d.etape)<=7&&d.datePose).forEach(d=>{ const j=Math.round((new Date(String(d.datePose).slice(0,10)+"T12:00")-new Date(t0+"T12:00"))/864e5);
     if(j>=1&&j<=3&&!d.confPoseEnvoyee) cartes.pose.unshift({d,txt:"J-"+j+" · envoyer la confirmation de pose au client",ic:"📲",date:t0,mp:"msgpose3"});
@@ -790,7 +790,7 @@ function viewDash(){
   const rang=x=>!x.date?2:(x.date<t0?0:(x.date===t0?1:3));
   for(const k in cartes) cartes[k].sort((a,b)=>rang(a)-rang(b) || (a.date||"").localeCompare(b.date||"") || (b.d.createdAt||0)-(a.d.createdAt||0));
   const goBtn=d=>{ const e=Number(d.etape); const a=(ACTIONS_ETAPE[e]||[]).find(x=>x[2]==="go"); const B=(v,l,c)=>`<button data-mact="qtri" data-id="${esc(d.id)}" data-v="${v}" class="${c||""}">${l}</button>`;
-    return (a?B(a[0],a[1],"go"):"")+(e===4?B("relance","📣 Relancé"):"")+((e===1||e===2)?B("nrp","🔕 NRP"+(Number(d.nbNRP)?" ("+d.nbNRP+")":""))+B("mail","✉️ Mail"):""); };
+    return (a?B(a[0],a[1],"go"):"")+(e===4&&!Number(d.nbRelancesDevis)?B("rappeldevis","✉️ Petit rappel"):"")+((e===1||e===2)?B("nrp","🔕 NRP"+(Number(d.nbNRP)?" ("+d.nbNRP+")":""))+B("mail","✉️ Mail"):""); };
   const card=x=>{ const r=rang(x); const quand=!x.date?"":(r===0?`<span class="pdate late">en retard · ${fmtDate(x.date)}</span>`:(r===1?`<span class="pdate today">aujourd'hui</span>`:`<span class="pdate">${fmtDate(x.date)}</span>`));
     return `<div class="pcard ${r===0?"late":(r===1?"today":"")}" data-open="${esc(x.d.id)}"><div class="pt"><b>${esc(fullName(x.d))}</b>${quand}</div><div class="ps">${x.ic} ${esc(x.txt)}${x.d.ville||x.d.cp?" · "+esc(x.d.ville||x.d.cp):""}</div><div class="qtri pact">${x.d.tel?`<a class="ptel" href="tel:${esc(String(x.d.tel).replace(/[^\d+]/g,""))}" data-stop="1">📞 ${esc(x.d.tel)}</a>`:""}${x.mp?`<button data-mact="qtri" data-id="${esc(x.d.id)}" data-v="${x.mp}" class="go">📲 Préparer le message</button>`:goBtn(x.d)}</div></div>`; };
   const cols=COLS.filter(c=>(cartes[c.k]||[]).length);
@@ -839,7 +839,7 @@ const ACTIONS_ETAPE = {
   1:[["appele","📞 Appelé · à qualifier","go"],["nrp","🔕 Pas répondu"],["mail","✉️ Mail"],["interesse","🤝 Intéressé"],["plustard","🔁 Plus tard"],["perdu","✖ Perdu","ko"]],
   2:[["interesse","🤝 Intéressé · devis à faire","go"],["nrp","🔕 Pas répondu"],["mail","✉️ Mail"],["plustard","🔁 Plus tard"],["perdu","✖ Perdu","ko"]],
   3:[["devis","📄 Devis envoyé","go"],["plustard","🔁 Plus tard"],["perdu","✖ Perdu","ko"]],
-  4:[["signe","✍️ Signé","go"],["relance","📣 Relancé aujourd'hui"],["plustard","🔁 Plus tard"],["perdu","✖ Perdu / refusé","ko"]],
+  4:[["signe","✍️ Signé","go"],["rappeldevis","✉️ Petit rappel (1 fois)"],["plustard","🔁 Plus tard"],["perdu","✖ Perdu / refusé","ko"]],
   5:[["dossierok","✅ Dossier complet · à planifier","go"],["perdu","✖ Annulé","ko"]],
   6:[["plan","📅 Choisir la date de pose","go"],["perdu","✖ Annulé","ko"]],
   7:[["pose","🛠️ Posé","go"],["plan","📅 Décaler"],["perdu","✖ Annulé","ko"]],
@@ -847,7 +847,7 @@ const ACTIONS_ETAPE = {
   9:[["paiement","💶 Premier paiement reçu","go"],["solde","🏆 Tout reçu"]],
   10:[["solde","🏆 Tout reçu","go"]],
   11:[["entretien","🔧 Entretien proposé","go"],["avis","⭐ Avis Google demandé"]],
-  12:[["rappel","📞 Le remettre à rappeler","go"],["devis","📄 Devis envoyé"],["perdu","✖ Perdu","ko"]],
+  12:[["mail","✉️ Mail : où en êtes-vous ?","go"],["rappel","📞 Le remettre à rappeler"],["devis","📄 Devis envoyé"],["perdu","✖ Perdu","ko"]],
   0:[["rappel","↩ Réactiver","go"]],
 };
 function triButtons(d){
@@ -1560,6 +1560,9 @@ const DEFAULT_SET = {
     {id:"m6",bot:"Marco",nom:"Relance sans réponse",txt:"Bonjour {prenom}, nous avons essayé de vous joindre au sujet de votre projet de pompe à chaleur. Rappelez-nous au {tel_societe} quand vous pouvez."},
     {id:"m7",bot:"Marco",nom:"Relance devis",txt:"Bonjour {prenom}, avez-vous pu regarder votre devis ? Une question sur les aides, le matériel ou les délais ? Appelez-nous au {tel_societe}, on reprend tout avec vous."},
     {id:"m8",bot:"Stan",nom:"Proposition entretien",txt:"Bonjour {prenom}, votre pompe à chaleur doit être entretenue pour garder sa garantie. Nous proposons 3 formules : Essentiel 14,90 €/mois (visite annuelle), Sérénité 26,90 €/mois (+ 1 dépannage par an inclus), Premium 39,90 €/mois (2 dépannages par an, SAV prioritaire, -10 % sur les pièces). Engagement 12 mois. Détails : eco-roy.fr/entretien-pompe-a-chaleur.html"},
+    {id:"m16",bot:"Marco",nom:"Lead du site : la suite du projet",txt:"Bonjour {prenom}, merci pour votre demande sur notre site. Pour préparer votre projet et votre dossier d'aides, pouvez-vous nous envoyer en réponse à ce mail : {pieces}, une photo de votre chauffage actuel avec sa plaque (marque, puissance, année), et une photo de l'endroit où irait l'unité extérieure. Nous vous appelons ensuite pour choisir ensemble le modèle et la puissance adaptés à votre maison, et fixer une date d'installation. Quand êtes-vous disponible ? Vous pouvez aussi nous joindre au {tel_societe}."},
+    {id:"m17",bot:"Marco",nom:"Lead du site : on a essayé de vous appeler",txt:"Bonjour {prenom}, nous avons essayé de vous appeler suite à votre demande sur notre site, sans réussir à vous joindre. Dites-nous en réponse à ce mail le moment qui vous arrange, ou appelez-nous au {tel_societe}. Pour gagner du temps, vous pouvez déjà nous envoyer : {pieces}, une photo de votre chauffage actuel avec sa plaque (marque, puissance, année), et une photo de l'endroit où irait l'unité extérieure. On s'occupe du reste : choix de la machine, puissance, dossier d'aides et date d'installation."},
+    {id:"m18",bot:"Stan",nom:"Contrat d'entretien (courrier ou client en cours)",txt:"Bonjour {prenom},\n\nVotre pompe à chaleur a été installée par nos soins. Pour qu'elle dure et garde sa garantie, elle doit être entretenue au moins tous les deux ans, et idéalement chaque année.\n\nNous vous proposons 3 formules, avec une visite de nos techniciens chaque année (engagement 12 mois) :\n{liens_entretien}\n\nPour souscrire, ouvrez le lien de la formule choisie ou appelez-nous au {tel_societe}. Le premier prélèvement n'a lieu que 14 jours après votre inscription."},
     {id:"m10",bot:"Marco",nom:"Lead : on a essayé de vous appeler",txt:"Bonjour {prenom}, nous avons essayé de vous appeler au sujet de votre projet, sans réussir à vous joindre. Rappelez-nous au {tel_societe} ou répondez à ce mail avec le moment qui vous arrange. Si vous ne l'avez pas encore fait, vous pouvez aussi faire votre simulation en 3 minutes : {lien_simul}"},
     {id:"m11",bot:"Marco",nom:"Suivi long terme : où en êtes-vous ?",txt:"Bonjour {prenom}, où en êtes-vous dans votre projet de pompe à chaleur ? Si vous ne l'avez pas encore fait, vous pouvez faire votre simulation en 3 minutes : {lien_simul}\n\nSi votre pompe à chaleur est déjà installée, pensez à son entretien, obligatoire au moins tous les deux ans. Nous proposons 3 formules avec une visite chaque année (pièces à votre charge, engagement 12 mois) :\n{liens_entretien}\n\nUne question ? {tel_societe}"},
     {id:"m12",bot:"Marco",nom:"Envoi du devis",txt:"Bonjour {prenom}, comme convenu, voici votre devis pour votre projet. Nous restons disponibles pour en parler au {tel_societe} : aides, matériel, délais, on reprend tout avec vous."},
@@ -1721,7 +1724,7 @@ function tachesAgenda(){
     const add=(date,type,txt,ic)=>T.push({d,date:date?String(date).slice(0,10):"",type,txt,ic,ville});
     if(E.lead(e) && !d.aVerifier){ if(d.rappelLe) add(d.rappelLe,"rappel","Rappeler"+(String(d.rappelLe).length>10?" à "+String(d.rappelLe).slice(11,16):""),"📞"); else add("","rappel","Appeler (pas de date de rappel)","📞"); }
     if(e===12 && d.rappelLTLe) add(d.rappelLTLe,"suivi","Relance suivi long terme","🔁");
-    if(e===4 && d.dateEnvoiDevis && d.statutDevis!=="Refusé"){ const nx=[3,7,14].map(n=>addJ(d.dateEnvoiDevis,n)).find(x=>x>=t0)||addJ(d.dateEnvoiDevis,14); add(nx,"devis","Relancer le devis","📄"); }
+    if(e===4 && d.dateEnvoiDevis && d.statutDevis!=="Refusé"){ if(!Number(d.nbRelancesDevis)) add(addJ(d.dateEnvoiDevis,7),"devis","Petit rappel du devis (1 seule fois)","📄"); }
     if(e===5) add(d.dateSignatureDevis?addJ(d.dateSignatureDevis,7):"","pieces","Compléter pièces / déposer MPR-OPX","🗂️");
     if((e===6||e===7) && !d.datePose) add("","programmer","Programmer la pose","🗓️");
     if((e===6||e===7) && d.datePose){ add(d.datePose,"pose","Pose"+(d.poseur?" · "+d.poseur:" · ⚠ sans poseur"),"🔧"); if(!d.dateCommande) add(addJ(d.datePose,-7),"commande","Commander le matériel","📦"); else if(d.dateLivraison && !d.livreLe) add(d.dateLivraison,"livraison","Livraison matériel","🚚"); }
@@ -1895,8 +1898,8 @@ function fillTpl(txt,d){
 }
 function telIntl(t){ let n=String(t||"").replace(/\D/g,""); if(n.startsWith("0")) n="33"+n.slice(1); return n; }
 function modeleEtape(d){ const e=Number(d.etape);
-  if(e===1||e===2) return Number(d.nbNRP)>0?"m10":"m1"; if(e===3) return "m1"; if(e===4){ const j=daysSince(d.dateEnvoiDevis); return (d.statutDevis==="Refusé"||(j!=null&&j>=7))?"m14":"m12"; } if(e===5) return "m13";
-  if(e===6) return "m15"; if(e===7) return "m3"; if(e>=8&&e<=11) return "m8"; if(e===12||e===0) return "m11"; return "m1"; }
+  const site=/site/i.test(d.source||""); if(e===1||e===2||e===3) return site?(Number(d.nbNRP)>0?"m17":"m16"):(Number(d.nbNRP)>0?"m10":"m1"); if(e===4){ const j=daysSince(d.dateEnvoiDevis); return (d.statutDevis==="Refusé"||(j!=null&&j>=7))?"m14":"m12"; } if(e===5) return "m13";
+  if(e===6) return "m15"; if(e===7) return "m3"; if(e>=8&&e<=11) return "m18"; if(e===12||e===0) return "m11"; return "m1"; }
 function openContact(d){
   const ms=SET().modeles; if(S.ctplFor!==d.id){ S.ctplFor=d.id; S.ctpl=modeleEtape(d); } const cur=S.ctpl||ms[0].id; const m=ms.find(x=>x.id===cur)||ms[0];
   const txt=fillTpl(m.txt,d).replace(/\s*\{societe\}\s*$/,"")+signature(m.bot);
@@ -1961,7 +1964,9 @@ document.addEventListener("click", async e=>{
     case "qtri": { const v=b.dataset.v; const now=today();
       if(v==="perdu"){ openModal(`<h2 style="margin-top:0">${esc(fullName(d))} → Perdu</h2><p class="small muted">Pourquoi ? (perdu = on ne recontacte plus)</p><div class="grid" style="gap:8px">${["Refus définitif","Ne veut plus être contacté","Lead faux / non valable","Pas éligible","Infinançable (refus banque)","Annulé / abandonné","Installé par un concurrent"].map(m=>`<button class="btn" data-mact="qperdu" data-id="${esc(d.id)}" data-v="${esc(m)}">${esc(m)}</button>`).join("")}</div>`); break; }
       if(v==="msgpose3"||v==="msgpose1"){ if(v==="msgpose3") d.confPoseEnvoyee=now; else d.rappelVeilleEnvoye=now; await saveDossier(d); S.ctpl=v==="msgpose3"?"m3":"m4"; S.ctplFor=d.id; openContact(d); break; }
-      if(v==="mail"){ S.ctpl=Number(d.nbNRP)>0?"m10":"m1"; S.ctplFor=d.id; openContact(d); break; }
+      if(v==="mail"){ S.ctpl=modeleEtape(d); S.ctplFor=d.id; openContact(d); break; }
+      if(v==="rappeldevis"){ if(Number(d.nbRelancesDevis)>0){ openModal(`<h2 style="margin-top:0">Petit rappel déjà fait</h2><p>${esc(fullName(d))} a déjà eu son rappel${d.dateRelanceDevis?" le "+esc(fmtDate(d.dateRelanceDevis)):""}. On ne relance pas une 2e fois par mail : on trouvera une autre façon de le recontacter (courrier, ou appel s'il te l'a demandé).</p><button class="btn block" data-act="closemodal">OK</button>`); break; }
+        d.dateRelanceDevis=now; d.nbRelancesDevis=1; await saveDossier(d); S.ctpl="m14"; S.ctplFor=d.id; openContact(d); break; }
       if(v==="infinancable"){ setEtape(d,0); d.motifKO="Infinançable (refus "+(d.organismeFinancement||"banque")+")"; d.aVerifier=false; }
       if(v==="comptant"){ d.financementRAC="Payé comptant"; }
       if(v==="rappel"){ setEtape(d,2); d.statutAppel="À rappeler"; }
