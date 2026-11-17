@@ -141,7 +141,7 @@ function doPost(e) {
     if (req.action === 'leadDimensionnement') return json(actionLeadDim(req));
     var who = authenticate(req.auth || {});
     switch (req.action) {
-      case 'login': return json({role: who.role, poseur: who.poseur, regie: who.regie});
+      case 'login': return json({role: who.role, user: who.user, poseur: who.poseur, regie: who.regie});
       case 'pull': return json(actionPull(who, Number(req.since) || 0));
       case 'push': return json(actionPush(who, req.records || []));
       case 'upload': return json(actionUpload(who, req));
@@ -164,7 +164,16 @@ function doPost(e) {
 
 function authenticate(a) {
   var c = getConfig();
-  if (a.token && a.token === c.ADMIN_TOKEN) return {role: 'admin'};
+  // Un code par personne (17/11/2026) : ADMIN_TOKEN = Sassi, puis une ligne CODE_<Prénom> par personne dans Config.
+  if (a.token) {
+    if (authLocked('equipe')) throw new Error('Trop d\'essais. Réessayez dans 15 minutes.');
+    var tok = String(a.token).trim();
+    if (c.ADMIN_TOKEN && tok === String(c.ADMIN_TOKEN).trim()) return {role: 'admin', user: 'Sassi'};
+    var uk = Object.keys(c).filter(function (k) { return k.indexOf('CODE_') === 0 && String(c[k]).trim() && String(c[k]).trim() === tok; })[0];
+    if (uk) return {role: 'admin', user: uk.slice(5)};
+    authFail('equipe', 'code équipe');
+    throw new Error('Code incorrect');
+  }
   if (a.regie && a.pin) {
     var lr = 'r_' + keyNom(a.regie).slice(0, 40);
     if (authLocked(lr)) throw new Error('Trop d\'essais. Réessayez dans 15 minutes.');
@@ -269,6 +278,7 @@ function actionPush(who, records) {
           }
         }
       }
+      if (who.role === 'admin' && who.user && merged === inc) { merged.modifiePar = who.user; merged.modifieLe = Date.now(); }
       writeRecord(sh, index, merged);
       returned.push(who.role === 'poseur' ? stripForPoseur(merged) : who.role === 'regie' ? stripRegiePoseur(merged, who) : merged);
       if ((who.role === 'poseur' || asPoseur) && stored && Number(merged.etape) === 8 && Number(stored.etape) < 8) notifyAdmin('✅ Chantier terminé : ' + nomComplet(merged), who.poseur + ' a déclaré le chantier de ' + nomComplet(merged) + ' terminé.\nPhotos après : ' + countPhotos(merged, 'apres') + '\nSatisfaction : ' + (merged.satisfaction && merged.satisfaction.note ? merged.satisfaction.note + '/5' : 'non remplie'));

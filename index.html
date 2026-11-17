@@ -696,7 +696,7 @@ function safeRender(){
 document.addEventListener("focusout",()=>setTimeout(()=>{ if(S.needRender && !sigDirty){ const a=document.activeElement; if(!a || !/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)){ S.needRender=false; captureDraft(); S._keepScroll=true; render(); } } },300));
 function header(){
   const title = isRegie() ? (S.view==="nouveau"?"Nouveau client":S.view==="poseur"?"Mes chantiers":S.view==="dossier"?(S.prevView==="poseur"&&posLink()?"Chantier":"Suivi du client"):"Mes clients") : isPoseur() ? "Mes chantiers" : ({dash:"Tableau de bord",pipeline:"Dossiers",dossier:"Dossier",carte:"Carte",planning:"Planning",finances:"Gestion",reglages:"Réglages"})[S.view]||"CRM";
-  const sub = isRegie() ? esc(CFG.regie)+" · Eco Roy" : isPoseur() ? esc(CFG.poseur) : (CFG.role==="demo"?"Mode démo (données locales)":"Eco-Roy");
+  const sub = isRegie() ? esc(CFG.regie)+" · Eco Roy" : isPoseur() ? esc(CFG.poseur) : (CFG.role==="demo"?"Mode démo (données locales)":"Eco-Roy"+(CFG.user?" · "+esc(CFG.user):""));
   const back = (S.view==="dossier"||(isRegie()&&S.view==="nouveau")) ? `<button class="back" data-act="back" aria-label="Retour">←</button>` : "";
   return `<header class="top">${back}<h1>${title}<small>${sub}</small></h1><div class="sync" id="sync" data-act="sync"></div></header>`;
 }
@@ -752,7 +752,7 @@ async function doLogin(){
   try{
     const r=await fetch(url,{method:"POST",body:JSON.stringify({action:"login",auth}),headers:{"Content-Type":"text/plain;charset=utf-8"}});
     const j=await r.json(); if(j.error) throw new Error(j.error);
-    CFG={url, role:j.role, token:auth.token, poseur:j.poseur||auth.poseur, regie:j.regie||auth.regie, pin:auth.pin, lastSync:0}; saveCfg();
+    CFG={url, role:j.role, user:j.user||"", token:auth.token, lastSync:0}; saveCfg();
     await DB.clear("dossiers"); await DB.clear("outbox"); await loadAll();
     S.view = CFG.role==="poseur" ? "poseur" : CFG.role==="regie" ? "regie" : "dash"; render(); syncNow(); if(isAdmin()) irisInit();
   }catch(e){ err.textContent = /Failed to fetch/.test(e.message) ? "Serveur injoignable. Vérifie l'adresse et ta connexion." : e.message; }
@@ -1036,7 +1036,7 @@ function viewDossier(d){
     </div>`;
   }
   if(S.tab==="hist") body=`${(d.comms||[]).length?`<h3>Contacts</h3><div class="list" style="margin-bottom:14px">${d.comms.slice().reverse().map(c=>`<div class="card"><div class="row"><b class="grow">${({sms:"SMS",whatsapp:"WhatsApp",mail:"Mail",appel:"Appel",commande:"Commande fournisseur"})[c.canal]||esc(c.canal)}${c.modele?" · "+esc(c.modele):""}</b><span class="small muted">${new Date(c.t).toLocaleString("fr-FR")}</span></div>${c.txt?`<div class="small muted" style="margin-top:4px">${esc(c.txt)}</div>`:""}</div>`).join("")}</div><h3>Étapes</h3>`:""}<div class="list">${(d.historique||[]).slice().reverse().map(h=>`<div class="card row"><span class="grow">${esc(etapeLabel(h.etape))}</span><span class="small muted">${new Date(h.t).toLocaleString("fr-FR")}</span></div>`).join("")}</div>
-    <div class="hr"></div><div class="small muted">Créé le ${new Date(d.createdAt).toLocaleString("fr-FR")} · modifié le ${new Date(d.updatedAt).toLocaleString("fr-FR")}</div>
+    <div class="hr"></div><div class="small muted">Créé le ${new Date(d.createdAt).toLocaleString("fr-FR")} · modifié le ${new Date(d.updatedAt).toLocaleString("fr-FR")}${d.modifiePar?" par "+esc(d.modifiePar):""}</div>
     <button class="btn danger" style="margin-top:14px" data-act="delete">Supprimer ce dossier</button>`;
   return loiBandeau(d)+`
   <div class="card">
