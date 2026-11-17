@@ -94,6 +94,14 @@ h3{font-size:14px;margin:0 0 8px;color:var(--muted);font-weight:600;text-transfo
 .pact{margin-top:6px}
 .ptel{border:1px solid var(--line);border-radius:8px;padding:4px 8px;font-size:12px;text-decoration:none;white-space:nowrap}
 .pmore{border:1px dashed var(--line);background:none;color:inherit;border-radius:8px;padding:6px;font-size:12px;cursor:pointer}
+.ajour{display:flex;flex-direction:column;gap:6px;margin-bottom:14px}
+.ajrow{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--line);border-radius:10px;padding:8px 10px;cursor:pointer}
+.ajrow.late{border-left-color:var(--danger)}.ajrow.today{border-left-color:var(--accent)}.ajrow.urgent{border-left-color:var(--danger);background:var(--danger-soft)}
+.ajrow .pt{display:flex;justify-content:space-between;gap:6px;align-items:baseline;font-size:14px}
+.ajcat{font-size:11px;border-radius:6px;padding:1px 6px;background:var(--brand-soft);white-space:nowrap}
+.qtri button.mort{border-color:var(--danger);color:var(--danger)}
+.legal{font-size:11px;color:var(--muted,#888)}
+details.cols>summary{cursor:pointer;font-weight:700;margin:6px 0 10px}
 .iris-fab{position:fixed;left:14px;bottom:calc(76px + env(safe-area-inset-bottom));z-index:16;display:flex;align-items:center;gap:6px;border:0;border-radius:99px;padding:10px 14px;background:var(--accent);color:#fff;font-weight:700;font-size:15px;box-shadow:0 4px 14px rgba(0,0,0,.25);cursor:pointer}
 .iris-fab span{font-size:13px}
 .iris-panel{position:fixed;left:12px;bottom:calc(132px + env(safe-area-inset-bottom));z-index:30;width:min(380px,calc(100vw - 24px));height:min(560px,calc(100vh - 200px));background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:0 10px 40px rgba(0,0,0,.3);display:flex;flex-direction:column;overflow:hidden}
@@ -368,6 +376,9 @@ function loiContact(d){
   return {lvl:"stop",ok:false,fin,txt:"Délai légal de rappel dépassé depuis le "+lim+". Sans nouvelle demande du client : ni appel, ni mail, ni SMS, ni WhatsApp commercial. Restent permis : le courrier postal, et la réponse à une demande qu'il t'envoie (garde la preuve et note sa date dans l'onglet Client)."};
 }
 function loiBandeau(d){ const L=loiContact(d); if(!L) return ""; const col=L.lvl==="ok"?"var(--ok)":L.lvl==="stop"?"var(--danger)":"var(--muted,#98a2b3)"; return `<div class="card" style="margin-bottom:12px;border-left:4px solid ${col}"><div class="small"><b>${L.lvl==="ok"?"📞 Rappel autorisé":L.lvl==="stop"?"⛔ Ne plus démarcher ce client":"ℹ️ Contrat terminé"}</b> · ${esc(L.txt)}</div></div>`; }
+// Créneaux légaux d'appel (art. D. 223-9) : lundi-vendredi, 10 h-13 h et 14 h-20 h.
+function creneauAppelOuvert(dt){ const x=dt||new Date(); const j=x.getDay(), m=x.getHours()*60+x.getMinutes(); return j>=1 && j<=5 && ((m>=600&&m<780)||(m>=840&&m<1200)); }
+const CRENEAU_TXT="Appels : lun.-ven. 10 h-13 h et 14 h-20 h";
 const fmtDate = s => { if(!s) return ""; const d=new Date(s); if(isNaN(d)) return esc(s); return d.toLocaleDateString("fr-FR",{weekday:"short",day:"numeric",month:"short"}); };
 const telLink = t => { const c=String(t||"").replace(/[^\d+]/g,""); return c?`<a href="tel:${esc(c)}" onclick="event.stopPropagation()">${esc(t)}</a>`:""; };
 function toast(msg){ const t=document.createElement("div"); t.className="toast"; t.textContent=msg; document.body.appendChild(t); setTimeout(()=>t.remove(),2600); }
@@ -805,14 +816,32 @@ function viewDash(){
   const card=x=>{ const r=rang(x); const quand=!x.date?"":(r===0?`<span class="pdate late">en retard · ${fmtDate(x.date)}</span>`:(r===1?`<span class="pdate today">aujourd'hui</span>`:`<span class="pdate">${fmtDate(x.date)}</span>`));
     return `<div class="pcard ${r===0?"late":(r===1?"today":"")}" data-open="${esc(x.d.id)}"><div class="pt"><b>${esc(fullName(x.d))}</b>${quand}</div><div class="ps">${x.ic} ${esc(x.txt)}${x.d.ville||x.d.cp?" · "+esc(x.d.ville||x.d.cp):""}</div><div class="qtri pact">${x.d.tel?`<a class="ptel" href="tel:${esc(String(x.d.tel).replace(/[^\d+]/g,""))}" data-stop="1">📞 ${esc(x.d.tel)}</a>`:""}${x.mp?`<button data-mact="qtri" data-id="${esc(x.d.id)}" data-v="${x.mp}" class="go">📲 Préparer le message</button>`:goBtn(x.d)}</div></div>`; };
   const cols=COLS.filter(c=>(cartes[c.k]||[]).length);
+  // ---- Toutes les actions du jour au même endroit (en retard, aujourd'hui, sans date) ----
+  const ouvert=creneauAppelOuvert();
+  const ordre=COLS.map(c=>c.k);
+  const jour=[]; for(const c of COLS) for(const x of (cartes[c.k]||[])) if(Number(x.d.etape)!==0 && (!x.date || x.date<=t0)) jour.push(Object.assign({cat:c,k:c.k},x));
+  jour.sort((a,b)=>(a.k==="urgent"?-1:0)-(b.k==="urgent"?-1:0) || rang(a)-rang(b) || ordre.indexOf(a.k)-ordre.indexOf(b.k) || (a.date||"").localeCompare(b.date||""));
+  const ligne=x=>{ const r=rang(x); const d=x.d; const quand=!x.date?"":(r===0?`<span class="pdate late">en retard · ${fmtDate(x.date)}</span>`:`<span class="pdate today">aujourd'hui</span>`);
+    let tel=""; let note="";
+    if(x.k==="appel"){ const L=loiContact(d);
+      if(L && L.lvl==="stop") note=`<div class="legal">⛔ Délai légal de rappel dépassé : plus d'appel, courrier seulement (ou « Mort »)</div>`;
+      else if(!ouvert) note=`<div class="legal">📵 Hors créneau légal · ${CRENEAU_TXT}</div>`;
+      else if(d.tel) tel=`<a class="ptel" href="tel:${esc(String(d.tel).replace(/[^\d+]/g,""))}" data-stop="1">📞 ${esc(d.tel)}</a>`;
+    } else if(d.tel && Number(d.etape)>=5) tel=`<a class="ptel" href="tel:${esc(String(d.tel).replace(/[^\d+]/g,""))}" data-stop="1">📞 ${esc(d.tel)}</a>`;
+    return `<div class="ajrow ${x.k==="urgent"?"urgent":(r===0?"late":(r===1?"today":""))}" data-open="${esc(d.id)}"><div class="pt"><b>${esc(fullName(d))}</b><span class="ajcat">${x.cat.ic} ${esc(x.cat.t)}</span></div><div class="ps">${x.ic||""} ${esc(x.txt)}${d.ville||d.cp?" · "+esc(d.ville||d.cp):""} ${quand}</div>${note}<div class="qtri pact">${tel}${x.mp?`<button data-mact="qtri" data-id="${esc(d.id)}" data-v="${x.mp}" class="go">📲 Préparer le message</button>`:goBtn(d)}<button data-mact="mort" data-id="${esc(d.id)}" class="mort">💀 Mort</button></div></div>`; };
+  const blocJour=`<h2 style="margin:4px 0 8px">📋 Actions du jour <span class="small muted">(${jour.length})</span></h2>
+  <div class="small muted" style="margin-bottom:8px">Tout ce qui est à faire aujourd'hui ou en retard, au même endroit. ${ouvert?"✅ Créneau d'appel ouvert.":"📵 Créneau d'appel fermé ("+CRENEAU_TXT+")."} « 💀 Mort » envoie le client dans Perdu et le retire de toutes les listes.</div>
+  <div class="ajour">${jour.map(ligne).join("") || '<div class="card empty">Rien à faire aujourd\'hui. 👌</div>'}</div>`;
   const nbRetard=Object.values(cartes).flat().filter(x=>rang(x)===0).length, nbJour=Object.values(cartes).flat().filter(x=>rang(x)===1).length;
   return `
   <div class="dhead"><div><h2 style="margin:0">Nos priorités</h2><div class="small muted">${nbRetard?`<b class="neg">${nbRetard} en retard</b> · `:""}${nbJour} pour aujourd'hui · une colonne = un type de tâche · le <b class="vert">bouton vert</b> fait avancer le client</div></div>
     <div class="dkpi"><button class="card kpi mini" data-nav="pipeline" data-filter="encaisser"><div class="v money">${eur(aEnc)}</div><div class="l">à encaisser</div></button></div></div>
   ${aTrier?`<div class="alert" data-nav="pipeline" data-filter="trier"><span class="ic">🧺</span><div class="grow"><b>${aTrier} fiche${aTrier>1?"s":""} à trier</b> — clique pour les ranger</div></div>`:""}
   ${sansMail.length?`<div class="alert" data-nav="reglages"><span class="ic">✎</span><div class="grow">Renseigner l'e-mail de commande de ${esc(sansMail.join(", "))} <span class="small muted">(Réglages → Fournisseurs)</span></div></div>`:""}
+  ${blocJour}
+  <details class="cols"><summary>Voir par colonnes (avec les 7 prochains jours)</summary>
   <div class="prio">${cols.map(c=>{ const L=cartes[c.k]; const late=L.filter(x=>rang(x)===0).length; const max=c.max||20;
-    return `<section class="pcol ${c.c||""}"><header><span class="pic">${c.ic}</span><span class="ptitle">${esc(c.t)}</span><b class="pn">${L.length}</b>${late?`<b class="pn late">${late} ⏰</b>`:""}</header><div class="pcards">${L.slice(0,max).map(card).join("")}${L.length>max?`<button class="pmore" data-nav="planning">+ ${L.length-max} autres dans le Planning</button>`:""}</div></section>`; }).join("") || '<div class="card empty">Rien à faire pour l\'instant. 👌</div>'}</div>
+    return `<section class="pcol ${c.c||""}"><header><span class="pic">${c.ic}</span><span class="ptitle">${esc(c.t)}</span><b class="pn">${L.length}</b>${late?`<b class="pn late">${late} ⏰</b>`:""}</header><div class="pcards">${L.slice(0,max).map(card).join("")}${L.length>max?`<button class="pmore" data-nav="planning">+ ${L.length-max} autres dans le Planning</button>`:""}</div></section>`; }).join("") || '<div class="card empty">Rien à faire pour l\'instant. 👌</div>'}</div></details>
   <button class="fab" data-act="new" aria-label="Nouveau dossier">+</button>`;
 }
 
@@ -1731,7 +1760,7 @@ async function geocodeMissing(){
 const addJ = (d,n) => { const t=new Date(String(d).slice(0,10)+"T12:00"); if(isNaN(t)) return ""; t.setDate(t.getDate()+n); return t.toISOString().slice(0,10); };
 function tachesAgenda(){
   const T=[]; const t0=today();
-  for(const d of actifs()){ const e=Number(d.etape); const ville=d.ville||d.cp||"";
+  for(const d of actifs()){ const e=Number(d.etape); const ville=d.ville||d.cp||""; if(e===0) continue; // Perdu = plus aucune action
     const add=(date,type,txt,ic)=>T.push({d,date:date?String(date).slice(0,10):"",type,txt,ic,ville});
     if(E.lead(e) && !d.aVerifier){ if(d.rappelLe) add(d.rappelLe,"rappel","Rappeler"+(String(d.rappelLe).length>10?" à "+String(d.rappelLe).slice(11,16):""),"📞"); else add("","rappel","Appeler (pas de date de rappel)","📞"); }
     if(e===12 && d.rappelLTLe) add(d.rappelLTLe,"suivi","Relance suivi long terme","🔁");
@@ -1999,6 +2028,10 @@ document.addEventListener("click", async e=>{
       if(v==="avis"){ d.avisDemandeLe=now; }
       if(v==="retour"){ const n=Number(d.etape); if(n>=2&&n<=11) setEtape(d,n-1,true); }
       d.aVerifier=false; await saveDossier(d); toast(fullName(d)+" → "+etapeLabel(d.etape)+(v==="nrp"?" · NRP "+d.nbNRP:"")); render(); break; }
+    case "mort": { if(!d) break;
+      const enCours=Number(d.etape)>=5 && Number(d.etape)<=10;
+      openModal(`<h2 style="margin-top:0">Sûr ? ${esc(fullName(d))} → Perdu</h2><p class="small muted">Le dossier part dans « Perdus » et disparaît de toutes les listes d'actions. On ne le recontacte plus.${enCours?" <b class=\"neg\">Attention : le chantier est en cours (dossier aides, pose ou paiement).</b>":""}</p><p class="small" style="margin:8px 0 6px"><b>Pourquoi ?</b> (un clic = confirmé)</p><div class="grid" style="gap:8px">${["Plus intéressé","Injoignable","Locataire","Autre"].map(m=>`<button class="btn" data-mact="mortok" data-id="${esc(d.id)}" data-v="${esc(m)}">${esc(m)}</button>`).join("")}</div>`); break; }
+    case "mortok": { if(!d) break; setEtape(d,0); d.motifKO="Mort · "+b.dataset.v; d.perduLe=today(); d.aVerifier=false; closeModal(); await saveDossier(d); toast(fullName(d)+" → Perdu ("+b.dataset.v+")"); render(); break; }
     case "qperdu": { setEtape(d,0); d.motifKO=b.dataset.v; d.aVerifier=false; closeModal(); await saveDossier(d); toast(fullName(d)+" → Perdu ("+b.dataset.v+")"); render(); break; }
     case "agtype": { const v=b.dataset.v; if(!v) S.agTypes=null; else { const a=S.agTypes||[]; const i=a.indexOf(v); if(i>=0) a.splice(i,1); else a.push(v); S.agTypes=a.length?a:null; } render(); break; }
     case "per": S.per=Number(b.dataset.v); render(); break;
