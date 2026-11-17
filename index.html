@@ -552,9 +552,9 @@ async function syncNow(){
     safeRender();
   }catch(e){
     console.error(e); S.sync={state:"off",msg:navigator.onLine?"Erreur synchro":"Hors ligne",err:String(e.message||e)};
-    if(CFG.role==="regie" && /régie ou PIN incorrect|Non autorisé|Accès régie fermé/i.test(String(e.message||e))){ // accès retiré le 17/11 : on efface tout sur cet appareil
+    if((CFG.role==="regie"||CFG.role==="poseur") && /PIN incorrect|Non autorisé|Accès|Chantier non autorisé/i.test(String(e.message||e))){ // accès retiré le 17/11 : on efface tout sur cet appareil
       try{ await DB.clear("dossiers"); await DB.clear("outbox"); await DB.clear("blobs"); }catch(_){ }
-      localStorage.removeItem("ecoroy_cfg"); CFG={}; S.dossiers.clear(); S.loginMode="regie"; render(); }
+      const ancienRole=CFG.role; localStorage.removeItem("ecoroy_cfg"); CFG={}; S.dossiers.clear(); S.loginMode=ancienRole; render(); }
   }finally{ syncing=false; renderSync(); if(syncAgain){ syncAgain=false; scheduleSync(300); } }
 }
 window.addEventListener("online",()=>scheduleSync(200));
@@ -730,10 +730,10 @@ function viewLogin(){
   <h1 style="margin:0 0 4px;font-size:24px">CRM Eco-Roy</h1>
   <p class="muted" style="margin:0 0 18px">Leads, dossiers MPR/CEE, chantiers et finances. Marche hors ligne.</p>
   <div class="card grid">
-    <div class="seg" id="loginSeg"><button data-act="loginmode" data-v="admin" class="${S.loginMode!=="poseur"?"on":""}">Gérant</button><button data-act="loginmode" data-v="poseur" class="${S.loginMode==="poseur"?"on":""}">Poseur</button></div>
+    <div class="seg" id="loginSeg"><button data-act="loginmode" data-v="admin" class="${S.loginMode!=="poseur"?"on":""}">Gérant</button></div>
     <label class="f"><span>Adresse du serveur</span><input type="url" id="lUrl" placeholder="https://script.google.com/macros/s/…/exec" value="${esc(pre)}"></label>
-    ${S.loginMode==="regie"?`
-    <div class="small neg">Les accès des régies sont fermés depuis le 17 novembre 2026 : le CRM est réservé à l'équipe Eco Roy.</div>`:S.loginMode==="poseur"?`
+    ${(S.loginMode==="regie"||S.loginMode==="poseur")?`
+    <div class="small neg">Les accès des régies et des poseurs sont fermés depuis le 17 novembre 2026 : le CRM est réservé à l'équipe Eco Roy (Sassi, Dan, la secrétaire).</div>`:false?`
     <label class="f"><span>Ton prénom</span><input type="text" id="lPoseur" autocomplete="username" placeholder="Igor, Kevin…"></label>
     <label class="f"><span>Code PIN</span><input type="password" inputmode="numeric" id="lPin" autocomplete="current-password"></label>`:`
     <label class="f"><span>Code gérant</span><input type="password" id="lToken" autocomplete="current-password"></label>`}
@@ -746,8 +746,8 @@ function viewLogin(){
 async function doLogin(){
   const url=$("#lUrl").value.trim(); const err=$("#lErr"); err.textContent="";
   if(!/^https:\/\/script\.google(usercontent)?\.com\//.test(url) && location.hostname!=="localhost"){ err.textContent="Colle l'adresse du serveur Apps Script (elle commence par https://script.google.com/)."; return; }
-  if(S.loginMode==="regie"){ err.textContent="Accès régie fermé."; return; }
-  const mode=S.loginMode==="poseur"?"poseur":"admin";
+  if(S.loginMode==="regie"||S.loginMode==="poseur"){ err.textContent="Accès fermé : CRM réservé à l'équipe Eco Roy."; return; }
+  const mode="admin";
   const auth = mode==="poseur" ? {poseur:$("#lPoseur").value.trim(), pin:$("#lPin").value.trim()} : mode==="regie" ? {regie:$("#lRegie").value.trim(), pin:$("#lPin").value.trim()} : {token:$("#lToken").value.trim()};
   try{
     const r=await fetch(url,{method:"POST",body:JSON.stringify({action:"login",auth}),headers:{"Content-Type":"text/plain;charset=utf-8"}});
@@ -1188,7 +1188,7 @@ function viewReglages(){
     ${S.sync.err?`<div class="small neg">${esc(S.sync.err)}</div>`:""}
     <button class="btn" data-act="sync">Synchroniser maintenant</button>
     ${isAdmin()?`<button class="btn primary" data-act="exportcompta">📊 Export pour le comptable (Excel)</button><label class="btn" style="cursor:pointer;text-align:center">🏦 Importer un relevé Revolut (CSV)<input type="file" accept=".csv,text/csv" hidden id="revolutCsv"></label><button class="btn" data-act="liensstripe">💳 Liens de paiement entretien (Stripe)</button><button class="btn" data-act="export">Exporter une sauvegarde (JSON)</button>`:""}
-    ${isAdmin()&&CFG.role!=="demo"?`<button class="btn" data-act="poseurlink">Copier le lien d'accès poseur</button><button class="btn" data-act="actus">📰 Actualités du site (à valider)</button>`:""}
+    ${isAdmin()&&CFG.role!=="demo"?`<button class="btn" data-act="actus">📰 Actualités du site (à valider)</button>`:""}
     <button class="btn danger" data-act="logout">Se déconnecter</button>
   </div>
   ${isAdmin()?`<h2>Poseurs</h2><div class="card grid"><label class="f"><span>Noms (séparés par des virgules)</span><input type="text" id="poseursIn" value="${esc(poseursList().join(", "))}"></label><button class="btn" data-act="saveposeurs">Enregistrer</button>
