@@ -322,7 +322,7 @@ function ordreDates(d){
   return pb;
 }
 const etapeLabel = n => (ETAPES.find(e=>e.n===Number(n))||{l:"?"}).l;
-const SOURCES = ["Site internet","Call Maroc","Hello Artisan","Effy","Igor","Parrainage","Apporteur","Direct","Autre"];
+const SOURCES = ["Site internet","Google Ads","Meta","Habitat Acquisition","Parrainage","Direct","Autre"];
 const PRODUITS = ["PAC air/eau","PAC + ballon thermo","PAC + ballon élec","Ballon thermodynamique","SSC","ITE","Photovoltaïque","Autre"];
 const FOURNISSEURS = ["Axdis","Brother Négoce","LM Plastic","Fourni-posé","Autre"];
 function LIST(k){ const s=SET(); if(k==="fournisseurs") return [...new Set([...(s.fournisseurs||[]).map(f=>f.nom).filter(Boolean),"Fourni-posé","Autre"])]; return (s[k]&&s[k].length)?s[k]:({sources:SOURCES,produits:PRODUITS})[k]||[]; }
@@ -552,6 +552,9 @@ async function syncNow(){
     safeRender();
   }catch(e){
     console.error(e); S.sync={state:"off",msg:navigator.onLine?"Erreur synchro":"Hors ligne",err:String(e.message||e)};
+    if(CFG.role==="regie" && /régie ou PIN incorrect|Non autorisé|Accès régie fermé/i.test(String(e.message||e))){ // accès retiré le 17/11 : on efface tout sur cet appareil
+      try{ await DB.clear("dossiers"); await DB.clear("outbox"); await DB.clear("blobs"); }catch(_){ }
+      localStorage.removeItem("ecoroy_cfg"); CFG={}; S.dossiers.clear(); S.loginMode="regie"; render(); }
   }finally{ syncing=false; renderSync(); if(syncAgain){ syncAgain=false; scheduleSync(300); } }
 }
 window.addEventListener("online",()=>scheduleSync(200));
@@ -727,11 +730,10 @@ function viewLogin(){
   <h1 style="margin:0 0 4px;font-size:24px">CRM Eco-Roy</h1>
   <p class="muted" style="margin:0 0 18px">Leads, dossiers MPR/CEE, chantiers et finances. Marche hors ligne.</p>
   <div class="card grid">
-    <div class="seg" id="loginSeg"><button data-act="loginmode" data-v="admin" class="${S.loginMode!=="poseur"?"on":""}">Gérant</button><button data-act="loginmode" data-v="poseur" class="${S.loginMode==="poseur"?"on":""}">Poseur</button><button data-act="loginmode" data-v="regie" class="${S.loginMode==="regie"?"on":""}">Régie</button></div>
+    <div class="seg" id="loginSeg"><button data-act="loginmode" data-v="admin" class="${S.loginMode!=="poseur"?"on":""}">Gérant</button><button data-act="loginmode" data-v="poseur" class="${S.loginMode==="poseur"?"on":""}">Poseur</button></div>
     <label class="f"><span>Adresse du serveur</span><input type="url" id="lUrl" placeholder="https://script.google.com/macros/s/…/exec" value="${esc(pre)}"></label>
     ${S.loginMode==="regie"?`
-    <label class="f"><span>Nom de la régie</span><input type="text" id="lRegie" autocomplete="username" placeholder="ex : Call Maroc"></label>
-    <label class="f"><span>Code PIN</span><input type="password" inputmode="numeric" id="lPin" autocomplete="current-password"></label>`:S.loginMode==="poseur"?`
+    <div class="small neg">Les accès des régies sont fermés depuis le 17 novembre 2026 : le CRM est réservé à l'équipe Eco Roy.</div>`:S.loginMode==="poseur"?`
     <label class="f"><span>Ton prénom</span><input type="text" id="lPoseur" autocomplete="username" placeholder="Igor, Kevin…"></label>
     <label class="f"><span>Code PIN</span><input type="password" inputmode="numeric" id="lPin" autocomplete="current-password"></label>`:`
     <label class="f"><span>Code gérant</span><input type="password" id="lToken" autocomplete="current-password"></label>`}
@@ -744,7 +746,8 @@ function viewLogin(){
 async function doLogin(){
   const url=$("#lUrl").value.trim(); const err=$("#lErr"); err.textContent="";
   if(!/^https:\/\/script\.google(usercontent)?\.com\//.test(url) && location.hostname!=="localhost"){ err.textContent="Colle l'adresse du serveur Apps Script (elle commence par https://script.google.com/)."; return; }
-  const mode=S.loginMode==="poseur"?"poseur":S.loginMode==="regie"?"regie":"admin";
+  if(S.loginMode==="regie"){ err.textContent="Accès régie fermé."; return; }
+  const mode=S.loginMode==="poseur"?"poseur":"admin";
   const auth = mode==="poseur" ? {poseur:$("#lPoseur").value.trim(), pin:$("#lPin").value.trim()} : mode==="regie" ? {regie:$("#lRegie").value.trim(), pin:$("#lPin").value.trim()} : {token:$("#lToken").value.trim()};
   try{
     const r=await fetch(url,{method:"POST",body:JSON.stringify({action:"login",auth}),headers:{"Content-Type":"text/plain;charset=utf-8"}});
@@ -1185,7 +1188,7 @@ function viewReglages(){
     ${S.sync.err?`<div class="small neg">${esc(S.sync.err)}</div>`:""}
     <button class="btn" data-act="sync">Synchroniser maintenant</button>
     ${isAdmin()?`<button class="btn primary" data-act="exportcompta">📊 Export pour le comptable (Excel)</button><label class="btn" style="cursor:pointer;text-align:center">🏦 Importer un relevé Revolut (CSV)<input type="file" accept=".csv,text/csv" hidden id="revolutCsv"></label><button class="btn" data-act="liensstripe">💳 Liens de paiement entretien (Stripe)</button><button class="btn" data-act="export">Exporter une sauvegarde (JSON)</button>`:""}
-    ${isAdmin()&&CFG.role!=="demo"?`<button class="btn" data-act="poseurlink">Copier le lien d'accès poseur</button><button class="btn primary" data-act="regies">🤝 Gérer les accès des régies</button><button class="btn" data-act="actus">📰 Actualités du site (à valider)</button>`:""}
+    ${isAdmin()&&CFG.role!=="demo"?`<button class="btn" data-act="poseurlink">Copier le lien d'accès poseur</button><button class="btn" data-act="actus">📰 Actualités du site (à valider)</button>`:""}
     <button class="btn danger" data-act="logout">Se déconnecter</button>
   </div>
   ${isAdmin()?`<h2>Poseurs</h2><div class="card grid"><label class="f"><span>Noms (séparés par des virgules)</span><input type="text" id="poseursIn" value="${esc(poseursList().join(", "))}"></label><button class="btn" data-act="saveposeurs">Enregistrer</button>
@@ -1588,7 +1591,7 @@ const DEFAULT_SET = {
   poseurs:[{nom:"Igor",capacite:2},{nom:"Kevin",capacite:1}],
   coutsLead:{"Call Maroc":0,"Hello Artisan":50,"Effy":119,"Site internet":0,"Igor":0,"Parrainage":0,"Apporteur":0,"Direct":0,"Autre":0},
   fournisseurs:[{nom:"Axdis",email:"",tel:""},{nom:"Brother Négoce",email:"",tel:""},{nom:"LM Plastic",email:"",tel:""}],
-  sources:["Site internet","Call Maroc","Hello Artisan","Effy","Igor","Parrainage","Apporteur","Direct","Autre"],
+  sources:["Site internet","Google Ads","Meta","Habitat Acquisition","Parrainage","Direct","Autre"],
   produits:["PAC air/eau","PAC + ballon thermo","PAC + ballon élec","Ballon thermodynamique","SSC","ITE","Photovoltaïque","Autre"],
   societe:{nom:"Eco Roy",tel:"09 72 14 91 62",mobile:"06 14 72 40 41",email:"contact@roy-consulting.com",site:"www.eco-roy.com",avisGoogle:""},
   modeles:[
@@ -1618,6 +1621,8 @@ function SET(){ const o=Object.assign({}, DEFAULT_SET, CFG.settings||{});
   const def=Object.fromEntries(DEFAULT_SET.modeles.map(m=>[m.id,m]));
   o.modeles=(o.modeles||[]).map(m=>m.bot?m:Object.assign({},m,{bot:(def[m.id]||{}).bot||"Marco"}));
   for(const m of DEFAULT_SET.modeles) if(!o.modeles.some(x=>x.id===m.id)) o.modeles.push(m);
+  // Sources du 17/11 : nos propres leads + Habitat Acquisition
+  o.sources=[...(o.sources||[])]; for(const k of ["Google Ads","Meta","Habitat Acquisition"]) if(!o.sources.includes(k)) o.sources.unshift(k);
   return o; }
 const signature = bot => bot ? `\n${bot} · assistant de l'équipe Eco Roy` : "";
 function poseursList(){ const base=SET().poseurs.map(p=>p.nom); const seen=new Set(base); for(const d of S.dossiers.values()) if(d.poseur && !seen.has(d.poseur) && !/\//.test(d.poseur)) seen.add(d.poseur); return [...seen]; }
