@@ -238,6 +238,17 @@ function actionLeadSite(req) {
     var score = scoreLead(req, couleur);
     var d = exist ? exist.data : newDossier();
     if (!exist) d.produit = ''; // nouveau dossier : le projet choisi sur le site remplace la valeur par défaut
+    // Fiche retirée (ancien stock du 17/11) ou en Perdu : la nouvelle demande la fait revenir comme lead neuf,
+    // sinon elle reste invisible dans le CRM (bug du 18/11 : le lead tombait dans une fiche « SUPPRIMÉ »).
+    var revenu = false;
+    if (exist && (d._deleted || Number(d.etape) === 0)) {
+      revenu = true;
+      d._deleted = false; delete d.retireLe; delete d.retireMotif;
+      d.etape = 1; d.statutAppel = 'À rappeler';
+      d.historique = (d.historique || []).concat([{t: Date.now(), etape: 1, pv: d.pv || 2}]);
+      ['nom', 'prenom', 'email', 'adresse', 'cp', 'ville', 'produit', 'habitat', 'proprietaire', 'surface', 'chauffage', 'anneeConstruction', 'nbPersonnes', 'rfr', 'utm', 'rappelLe', 'demandeRappel'].forEach(function (k) { d[k] = ''; });
+      d.source = 'Site internet';
+    }
     var add = {
       nom: pub(req.nom, 80), prenom: pub(req.prenom, 80), tel: tel, email: pub(req.email, 120), adresse: pub(req.adresse, 200), cp: pub(req.cp, 10), ville: pub(req.ville, 80),
       source: 'Site internet', produit: pub(req.produit, 60) || 'PAC air/eau', habitat: pub(req.habitat, 60), proprietaire: pub(req.proprietaire, 60),
@@ -255,7 +266,7 @@ function actionLeadSite(req) {
     writeRecord(sh, index, d);
     notifyAdmin((score.label === 'chaud' ? '🔥 ' : '📥 ') + 'Lead site : ' + nomComplet(d) + ' — ' + (couleur || '?') + ' — ' + score.score + '/100',
       'Nouveau lead depuis le site.\n\nNom : ' + nomComplet(d) + '\nTél : ' + d.tel + '\nProjet demandé : ' + add.produit + '\nCP : ' + d.cp + ' ' + (d.ville || '') + '\nCouleur MPR : ' + (couleur || 'non calculable') +
-      (d.rappelLe ? '\n📅 À rappeler : ' + (d.demandeRappel || d.rappelLe) : '') + '\nChauffage : ' + (d.chauffage || '?') + ' · Surface : ' + (d.surface || '?') + ' m²\nScore : ' + score.score + '/100 (' + score.label + ')\n' + score.detail.join('\n') + (exist ? '\n\n⚠️ Ce numéro existait déjà dans le CRM (fiche mise à jour).' : ''));
+      (d.rappelLe ? '\n📅 À rappeler : ' + (d.demandeRappel || d.rappelLe) : '') + '\nChauffage : ' + (d.chauffage || '?') + ' · Surface : ' + (d.surface || '?') + ' m²\nScore : ' + score.score + '/100 (' + score.label + ')\n' + score.detail.join('\n') + (revenu ? '\n\n↩️ Ce numéro était dans l\'ancien stock ou en Perdu : la fiche revient en « Lead reçu » avec les infos de la nouvelle demande.' : exist ? '\n\n⚠️ Ce numéro existait déjà dans le CRM (fiche mise à jour).' : ''));
     return {ok: true, token: d.leadToken, couleur: couleur, aideMPR: couleur ? ({bleu: 5000, jaune: 4000, violet: 3000, rose: 0})[couleur] : null, score: score.score};
   } finally { lock.releaseLock(); }
 }
