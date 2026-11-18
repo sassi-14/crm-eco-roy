@@ -12,14 +12,6 @@
  */
 
 // ==== Sources existantes (tes Sheets actuels) ====
-var SOURCES = {
-  // Identifiants des Google Sheets d'origine : renseignés uniquement dans le projet Apps Script, jamais publiés.
-  CALL_MAROC: ['ID_SHEET_CALL_PAC', 'ID_SHEET_CALL_ISO'],
-  SUIVI_CLIENTS: 'ID_SHEET_SUIVI',
-  COMPTE_PAC: 'ID_SHEET_COMPTE_PAC',
-  IGOR: 'ID_SHEET_IGOR'
-};
-
 var COLS = ['id', 'serverTs', 'updatedAt', 'nom', 'prenom', 'tel', 'cp', 'ville', 'source', 'etape', 'poseur', 'datePose', 'couleur', 'margePrev', 'resteAEncaisser', 'json'];
 // Pipeline v2 (organigramme Sassi 10/11/2026)
 var ETAPES = {1: 'Lead reçu', 2: 'Téléprospection', 3: 'Confirmation', 4: 'Devis envoyé', 5: 'Dossier · pièces & comptes', 6: 'À planifier', 7: 'Pose programmée', 8: 'Chantier réalisé', 9: 'Facture & dépôts', 10: 'Paiement en cours', 11: 'Soldé · clôturé', 12: 'Suivi long terme', 0: 'Perdu'};
@@ -39,10 +31,6 @@ function migrerPipelineV2() {
   readAll().forEach(function (r) { var d = r.data; if (migrerV2(d)) { d.updatedAt = Date.now(); writeRecord(sh, index, d); n++; } });
   Logger.log(n + ' dossiers passés au pipeline v2');
 }
-var POSEUR_FIELDS = ['id', 'nom', 'prenom', 'tel', 'adresse', 'cp', 'ville', 'produit', 'materiel', 'fournisseur', 'datePose', 'poseur', 'etape', 'habitat',
-  'surface', 'chauffage', 'emetteurs', 'compteur', 'notesTech', 'photos', 'satisfaction', 'notesPoseur', 'updatedAt', 'createdAt', 'historique'];
-var POSEUR_WRITABLE = ['photos', 'satisfaction', 'notesPoseur', 'etape', 'historique'];
-
 /* ============================================================
    INSTALLATION
    ============================================================ */
@@ -62,8 +50,6 @@ function setup() {
     cfg.getRange(1, 1, 1, 3).setValues([['Clé', 'Valeur', 'Explication']]).setFontWeight('bold');
     var rows = [
       ['ADMIN_TOKEN', randomCode(24), 'Code gérant à saisir dans l\'appli (ne le partage pas)'],
-      ['POSEUR_Igor', randomPin(), 'PIN de Igor'],
-      ['POSEUR_Kevin', randomPin(), 'PIN de Kevin'],
       ['EMAIL_ALERTES', Session.getEffectiveUser().getEmail(), 'Adresse qui reçoit les alertes et le récap du matin'],
       ['MARGE_MINI', '1000', 'Alerte si marge prévisionnelle en dessous (€)'],
       ['RELANCE_CLIENTS', 'non', 'oui = mail auto au client quand il manque des pièces (tous les 3 jours)'],
@@ -83,7 +69,6 @@ function setup() {
 
   // Bots
   ScriptApp.getProjectTriggers().forEach(function (t) { ScriptApp.deleteTrigger(t); });
-  ScriptApp.newTrigger('botImportLeads').timeBased().everyMinutes(15).create();
   ScriptApp.newTrigger('botRecapMatin').timeBased().atHour(7).nearMinute(45).everyDays(1).inTimezone('Europe/Paris').create();
   ScriptApp.newTrigger('botRelancesClients').timeBased().atHour(10).everyDays(1).inTimezone('Europe/Paris').create();
 
@@ -141,16 +126,13 @@ function doPost(e) {
     if (req.action === 'leadDimensionnement') return json(actionLeadDim(req));
     var who = authenticate(req.auth || {});
     switch (req.action) {
-      case 'login': return json({role: who.role, user: who.user, poseur: who.poseur, regie: who.regie});
+      case 'login': return json({role: who.role, user: who.user});
       case 'pull': return json(actionPull(who, Number(req.since) || 0));
       case 'push': return json(actionPush(who, req.records || []));
       case 'upload': return json(actionUpload(who, req));
       case 'file': return json(actionFile(who, req.id));
       case 'actusAdmin': if (who.role !== 'admin') throw new Error('Réservé au gérant'); return json(actionActusAdmin());
       case 'actuStatut': if (who.role !== 'admin') throw new Error('Réservé au gérant'); return json(actionActuStatut(req.slug, req.statut));
-      case 'regies': if (who.role !== 'admin') throw new Error('Réservé au gérant'); return json(actionRegies());
-      case 'regieAdd': if (who.role !== 'admin') throw new Error('Réservé au gérant'); return json(actionRegieAdd(req.nom));
-      case 'regieDel': if (who.role !== 'admin') throw new Error('Réservé au gérant'); return json(actionRegieDel(req.nom));
       case 'catalogue': if (who.role !== 'admin') throw new Error('Réservé au gérant'); return json({items: catRead()});
       case 'catalogueSave': if (who.role !== 'admin') throw new Error('Réservé au gérant'); return json(catSave(req));
       case 'getSettings': if (who.role !== 'admin') throw new Error('Réservé au gérant'); return json({settings: JSON.parse(PropertiesService.getScriptProperties().getProperty('SETTINGS') || 'null')});
@@ -162,61 +144,24 @@ function doPost(e) {
   }
 }
 
+/** Accès réservé à l'équipe Eco Roy (17/11/2026) : ADMIN_TOKEN = Sassi, puis une ligne CODE_<Prénom> par personne dans Config.
+ *  Plus de régies ni de poseurs. */
 function authenticate(a) {
   var c = getConfig();
-  // Un code par personne (17/11/2026) : ADMIN_TOKEN = Sassi, puis une ligne CODE_<Prénom> par personne dans Config.
-  if (a.token) {
-    if (authLocked('equipe')) throw new Error('Trop d\'essais. Réessayez dans 15 minutes.');
-    var tok = String(a.token).trim();
-    if (c.ADMIN_TOKEN && tok === String(c.ADMIN_TOKEN).trim()) return {role: 'admin', user: 'Sassi'};
-    var uk = Object.keys(c).filter(function (k) { return k.indexOf('CODE_') === 0 && String(c[k]).trim() && String(c[k]).trim() === tok; })[0];
-    if (uk) return {role: 'admin', user: uk.slice(5)};
-    authFail('equipe', 'code équipe');
-    throw new Error('Code incorrect');
-  }
-  if (a.regie && a.pin) {
-    var lr = 'r_' + keyNom(a.regie).slice(0, 40);
-    if (authLocked(lr)) throw new Error('Trop d\'essais. Réessayez dans 15 minutes.');
-    var rk = Object.keys(c).filter(function (k) { return k.indexOf('REGIE_') === 0 && keyNom(k.slice(6)) === keyNom(a.regie); })[0];
-    if (rk && String(c[rk]).trim() === String(a.pin).trim()) {
-      var lk = Object.keys(c).filter(function (k) { return k.indexOf('REGIEPOSEUR_') === 0 && keyNom(k.slice(12)) === keyNom(rk.slice(6)); })[0];
-      return {role: 'regie', regie: rk.slice(6), poseur: lk ? String(c[lk]).trim() : undefined};
-    }
-    authFail(lr, 'régie ' + clean(a.regie).slice(0, 40));
-    throw new Error('Nom de régie ou PIN incorrect');
-  }
-  if (a.poseur && a.pin) {
-    var lp = 'p_' + keyNom(a.poseur).slice(0, 40);
-    if (authLocked(lp)) throw new Error('Trop d\'essais. Réessayez dans 15 minutes.');
-    var key = Object.keys(c).filter(function (k) { return k.indexOf('POSEUR_') === 0 && k.slice(7).toLowerCase() === String(a.poseur).trim().toLowerCase(); })[0];
-    if (key && String(c[key]).trim() === String(a.pin).trim()) return {role: 'poseur', poseur: key.slice(7)};
-    authFail(lp, 'poseur ' + clean(a.poseur).slice(0, 40));
-    throw new Error('Prénom ou PIN incorrect');
-  }
-  Utilities.sleep(800);
+  if (!a.token) { Utilities.sleep(800); throw new Error('Code incorrect'); }
+  if (authLocked('equipe')) throw new Error('Trop d\'essais. Réessayez dans 15 minutes.');
+  var tok = String(a.token).trim();
+  if (c.ADMIN_TOKEN && tok === String(c.ADMIN_TOKEN).trim()) return {role: 'admin', user: 'Sassi'};
+  var uk = Object.keys(c).filter(function (k) { return k.indexOf('CODE_') === 0 && String(c[k]).trim() && String(c[k]).trim() === tok; })[0];
+  if (uk) return {role: 'admin', user: uk.slice(5)};
+  authFail('equipe', 'code équipe');
   throw new Error('Code incorrect');
 }
 
 function actionPull(who, since) {
-  var all = readAll();
-  var out = [], ids = [];
-  all.forEach(function (r) {
-    if (who.role === 'regie') {
-      var vr = visibleForRegie(r.data, who.regie), vp = who.poseur && visibleForPoseur(r.data, who.poseur);
-      if (!vr && !vp) return;
-      ids.push(r.data.id);
-      if (r.serverTs > since) out.push(stripRegiePoseur(r.data, who));
-    } else if (who.role === 'poseur') {
-      if (!visibleForPoseur(r.data, who.poseur)) return;
-      ids.push(r.data.id);
-      if (r.serverTs > since) out.push(stripForPoseur(r.data));
-    } else if (r.serverTs > since) {
-      out.push(r.data);
-    }
-  });
-  var res = {now: Date.now(), records: out};
-  if (who.role === 'poseur' || who.role === 'regie') { res.full = true; res.ids = ids; }
-  return res;
+  var out = [];
+  readAll().forEach(function (r) { if (r.serverTs > since) out.push(r.data); });
+  return {now: Date.now(), records: out};
 }
 
 function actionPush(who, records) {
@@ -228,60 +173,20 @@ function actionPush(who, records) {
       if (Number(inc.pv) !== PV) migrerV2(inc); // appli pas encore à jour : on traduit les étapes
       var row = index[inc.id]; var stored = row ? JSON.parse(sh.getRange(row, COLS.length).getValue()) : null;
       var merged;
-      var asPoseur = who.role === 'regie' && who.poseur && stored && visibleForPoseur(stored, who.poseur);
-      if (who.role === 'regie' && !asPoseur) {
-        if (stored) {
-          if (!visibleForRegie(stored, who.regie)) return;
-          merged = JSON.parse(JSON.stringify(stored));
-          merged.commentairesRegie = mergeComments(stored.commentairesRegie, ownComments(inc.commentairesRegie, stored.commentairesRegie, who.regie));
-          var nDocs = mergeDocsRegie(merged, stored, inc, who.regie);
-          if (!nDocs && JSON.stringify(merged.commentairesRegie) === JSON.stringify(stored.commentairesRegie || [])) { returned.push(stripRegiePoseur(stored, who)); return; }
-          merged.updatedAt = Date.now();
-          var lastC = merged.commentairesRegie[merged.commentairesRegie.length - 1];
-          if (nDocs > 0) notifyAdmin('📎 ' + who.regie + ' a envoyé ' + nDocs + ' document(s) : ' + nomComplet(merged), 'Documents à voir dans la fiche du client (onglet Régie).');
-          else if (JSON.stringify(merged.commentairesRegie) !== JSON.stringify(stored.commentairesRegie || [])) notifyAdmin('💬 Message de ' + who.regie + ' : ' + nomComplet(merged), lastC ? lastC.txt : '');
-        } else {
-          var tel9 = normTel(inc.tel).slice(-9);
-          var dup = tel9 && readAll().filter(function (r) { return !r.data._deleted && normTel(r.data.tel).slice(-9) === tel9; })[0];
-          merged = newDossier();
-          REGIE_CREATE.forEach(function (k) { if (inc[k] !== undefined) merged[k] = clean(inc[k]); });
-          merged.id = inc.id; merged.etape = 1; merged.source = 'Régie'; merged.regie = who.regie; merged.pv = PV;
-          merged.createdAt = Date.now(); merged.updatedAt = Date.now(); merged.historique = [{t: Date.now(), etape: 1, pv: PV}];
-          merged.commentairesRegie = mergeComments([], ownComments(inc.commentairesRegie, [], who.regie));
-          merged.demandeRappel = 'Envoyé par la régie ' + who.regie + ' le ' + Utilities.formatDate(new Date(), 'Europe/Paris', 'dd/MM/yyyy');
-          if (dup) { merged.aVerifier = true; merged.notes = '⚠️ Doublon possible : même téléphone que « ' + nomComplet(dup.data) + ' » (déjà dans le CRM, source ' + (dup.data.source || '?') + ').'; }
-          notifyAdmin('📥 Nouveau client de la régie ' + who.regie + ' : ' + nomComplet(merged), 'Tél : ' + (merged.tel || '') + ' · ' + (merged.cp || '') + ' ' + (merged.ville || '') + ' · ' + (merged.produit || '') + (dup ? '\n⚠️ Doublon possible avec ' + nomComplet(dup.data) : ''));
-        }
-      } else if (who.role === 'poseur' || asPoseur) {
-        if (!stored || !visibleForPoseur(stored, who.poseur)) return;
-        merged = JSON.parse(JSON.stringify(stored));
-        if (asPoseur) { merged.commentairesRegie = mergeComments(stored.commentairesRegie, ownComments(inc.commentairesRegie, stored.commentairesRegie, who.regie)); mergeDocsRegie(merged, stored, inc, who.regie); }
-        // Ce qu'un poseur peut écrire : ses notes, la satisfaction, l'étape (contrôlée plus bas), la suite de l'historique et ses photos.
-        if (inc.notesPoseur !== undefined) merged.notesPoseur = String(inc.notesPoseur == null ? '' : inc.notesPoseur).slice(0, 4000);
-        if (inc.satisfaction && typeof inc.satisfaction === 'object' && JSON.stringify(inc.satisfaction).length <= 6000) merged.satisfaction = inc.satisfaction;
-        var hs = stored.historique || [];
-        merged.historique = hs.concat((Array.isArray(inc.historique) ? inc.historique : []).slice(hs.length, hs.length + 5).map(function (h) { return {t: Number(h && h.t) || Date.now(), etape: Number(h && h.etape) || stored.etape, pv: PV}; }));
-        // un poseur ne peut que passer le chantier à « Installé »
-        if (Number(inc.etape) !== Number(stored.etape)) merged.etape = (Number(inc.etape) === 8 && Number(stored.etape) <= 8) ? 8 : stored.etape;
-        merged.photos = mergePhotos(stored.photos, safePhotos(inc.photos));
-        merged.updatedAt = Math.max(Number(inc.updatedAt) || 0, Number(stored.updatedAt) || 0);
+      if (stored && Number(stored.updatedAt) > Number(inc.updatedAt)) {
+        merged = stored; merged.photos = mergePhotos(stored.photos, inc.photos); merged.commentairesRegie = mergeComments(stored.commentairesRegie, inc.commentairesRegie);
       } else {
-        if (stored && Number(stored.updatedAt) > Number(inc.updatedAt)) {
-          merged = stored; merged.photos = mergePhotos(stored.photos, inc.photos); merged.commentairesRegie = mergeComments(stored.commentairesRegie, inc.commentairesRegie);
-        } else {
-          merged = inc;
-          if (stored) {
-            merged.photos = mergePhotos(stored.photos, inc.photos);
-            if (stored.satisfaction && !inc.satisfaction) merged.satisfaction = stored.satisfaction;
-            if (stored.notesPoseur && !inc.notesPoseur) merged.notesPoseur = stored.notesPoseur;
-            if (stored.commentairesRegie) merged.commentairesRegie = mergeComments(stored.commentairesRegie, inc.commentairesRegie);
-          }
+        merged = inc;
+        if (stored) {
+          merged.photos = mergePhotos(stored.photos, inc.photos);
+          if (stored.satisfaction && !inc.satisfaction) merged.satisfaction = stored.satisfaction;
+          if (stored.notesPoseur && !inc.notesPoseur) merged.notesPoseur = stored.notesPoseur;
+          if (stored.commentairesRegie) merged.commentairesRegie = mergeComments(stored.commentairesRegie, inc.commentairesRegie);
         }
+        if (who.user) { merged.modifiePar = who.user; merged.modifieLe = Date.now(); }
       }
-      if (who.role === 'admin' && who.user && merged === inc) { merged.modifiePar = who.user; merged.modifieLe = Date.now(); }
       writeRecord(sh, index, merged);
-      returned.push(who.role === 'poseur' ? stripForPoseur(merged) : who.role === 'regie' ? stripRegiePoseur(merged, who) : merged);
-      if ((who.role === 'poseur' || asPoseur) && stored && Number(merged.etape) === 8 && Number(stored.etape) < 8) notifyAdmin('✅ Chantier terminé : ' + nomComplet(merged), who.poseur + ' a déclaré le chantier de ' + nomComplet(merged) + ' terminé.\nPhotos après : ' + countPhotos(merged, 'apres') + '\nSatisfaction : ' + (merged.satisfaction && merged.satisfaction.note ? merged.satisfaction.note + '/5' : 'non remplie'));
+      returned.push(merged);
     });
     return {records: returned};
   } finally { lock.releaseLock(); }
@@ -292,12 +197,6 @@ function actionUpload(who, req) {
   if (String(req.full).length > 14000000) throw new Error('Fichier trop lourd');
   var folder = DriveApp.getFolderById(PropertiesService.getScriptProperties().getProperty('PHOTOS_ID'));
   var d = findRecord(req.dossierId);
-  if (who.role === 'regie') {
-    var okDoc = d && visibleForRegie(d, who.regie) && DOC_KINDS.indexOf(req.kind) >= 0;
-    var okPose = d && who.poseur && visibleForPoseur(d, who.poseur);
-    if (!okDoc && !okPose) throw new Error('Non autorisé');
-  }
-  if (who.role === 'poseur' && (!d || !visibleForPoseur(d, who.poseur))) throw new Error('Chantier non autorisé');
   var sub = clientFolder(folder, d ? nomComplet(d) + ' — ' + (d.ville || d.cp || '') : 'Divers');
   if (/^data:application\/pdf/.test(String(req.full)) && DOC_KINDS.indexOf(req.kind) < 0) throw new Error('PDF accepté seulement pour les documents');
   var full = dataUrlToBlob(req.full, (req.kind || 'photo') + '_' + Utilities.formatDate(new Date(), 'Europe/Paris', 'yyyyMMdd_HHmmss') + extOf(req.full));
@@ -311,7 +210,6 @@ function actionUpload(who, req) {
 }
 
 function actionFile(who, id) {
-  if (who.role === 'regie' && !who.poseur) throw new Error('Non autorisé');
   var f = DriveApp.getFileById(id);
   var root = PropertiesService.getScriptProperties().getProperty('PHOTOS_ID');
   var p = f.getParents(); var ok = false;
@@ -381,25 +279,9 @@ function scoreLead(r, couleur) {
    BOTS
    ============================================================ */
 
-/** Toutes les 15 min : importe les nouvelles lignes des Sheets du call Maroc. */
+/** Ancien import du call Maroc (arrêté le 16/11/2026) : se supprime tout seul de la liste des déclencheurs. */
 function botImportLeads() {
-  var lock = LockService.getScriptLock(); if (!lock.tryLock(10000)) return;
-  try {
-    var sh = dbSheet(); var index = indexRows(sh); var all = readAll(); var created = [];
-    var known = {}; all.forEach(function (r) { known[keyNom(r.data.nom) + '|' + String(r.data.cp || '')] = true; var t = normTel(r.data.tel).slice(-9); if (t) known['t' + t] = true; });
-    SOURCES.CALL_MAROC.forEach(function (id) {
-      var rows; try { rows = readTable(id); } catch (e) { return; }
-      rows.forEach(function (r) {
-        var nom = r.get('nom'); if (!nom || /^dupont$/i.test(nom.trim())) return;
-        var cp = r.get('cp'); var t = normTel(r.get('tel')).slice(-9);
-        if (known[keyNom(nom) + '|' + cp] || (t && known['t' + t])) return;
-        var d = leadFromCallRow(r);
-        writeRecord(sh, index, d); created.push(d);
-        known[keyNom(nom) + '|' + cp] = true; if (t) known['t' + t] = true;
-      });
-    });
-    if (created.length) notifyAdmin('📥 ' + created.length + ' nouveau(x) lead(s) du call Maroc', created.map(function (d) { return '• ' + nomComplet(d) + ' — ' + (d.cp || '') + ' ' + (d.ville || '') + ' — ' + (d.tel || ''); }).join('\n'));
-  } finally { lock.releaseLock(); }
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'botImportLeads') ScriptApp.deleteTrigger(t); });
 }
 
 /** Chaque matin : récap des actions du jour par mail. */
@@ -481,141 +363,9 @@ function botRelancesClients() {
 /* ============================================================
    MIGRATION : import de tes Sheets actuels (à lancer UNE fois)
    ============================================================ */
-function migrationExistant() {
-  var sh = dbSheet(); var index = indexRows(sh);
-  if (Object.keys(index).length > 0) throw new Error('La base contient déjà des dossiers : migration annulée pour éviter les doublons.');
-  var list = [];
-  function match(nom) { var k = keyNom(nom); if (k.length < 3) return null; return list.filter(function (d) { var x = keyNom(d.nom + ' ' + (d.prenom || '')); var y = keyNom(d.nom); return x.indexOf(k) === 0 || k.indexOf(y) === 0 && y.length >= 4; })[0] || null; }
-
-  // 1) compte pac 1€ : finances (1 ligne = 1 dossier)
-  var cp = SpreadsheetApp.openById(SOURCES.COMPTE_PAC).getSheets()[0].getDataRange().getDisplayValues();
-  var h = cp.findIndex ? cp.findIndex(function (r) { return r.join('|').toUpperCase().indexOf('VALO CEE') >= 0; }) : 0;
-  for (var i = h + 1; i < cp.length; i++) {
-    var r = cp[i]; var nomBrut = String(r[0] || '').trim(); if (!nomBrut || /^clients$/i.test(nomBrut)) continue;
-    var parts = nomBrut.split(/\s+/); var d = newDossier();
-    d.nom = cap(nomBrut); d.prenom = ''; d.source = mapSource(r[7]);
-    var dateTxt = String(r[1] || '').trim(); var dt = parseDateFr(dateTxt);
-    if (dt) d.datePose = dt; else if (dateTxt) d.notes = 'Colonne date : ' + dateTxt;
-    d.valoCEE = firstNum(r[2]); if (/off\s*watt/i.test(r[2])) d.notes = ((d.notes || '') + ' · CEE via Off Watt').trim();
-    d.valoMPR = firstNum(r[3]);
-    var st = splitNomPrix(r[4]); d.poseur = st.nom; d.prixPoseur = st.prix;
-    d.produit = mapProduit(r[5]); var fo = splitNomPrix(r[6]); d.prixMateriel = fo.prix; d.fournisseur = mapFournisseur(r[6]);
-    d.regie = String(r[7] || '').trim(); d.commission = firstNum(r[8]);
-    if (/manque/i.test(r[8])) d.notes = ((d.notes || '') + ' · Commission : ' + r[8]).trim();
-    var statut = String(r[10] || '') + ' ' + String(r[11] || '');
-    applyStatutTexte(d, statut);
-    d.etape = /instal/i.test(r[10]) && !/prevue|prévue/i.test(r[10]) ? 9 : (/previsite/i.test(statut) ? 2 : (d.datePose ? 7 : 3));
-    if (/prevue|prévue/i.test(r[10])) d.etape = 6;
-    d.aVerifier = true; d.historique = [{t: Date.now(), etape: d.etape}];
-    list.push(d);
-  }
-
-  // 2) Suivi clients : étapes, statuts OPX / MPR, soldes
-  var su = SpreadsheetApp.openById(SOURCES.SUIVI_CLIENTS).getSheets()[0].getDataRange().getDisplayValues();
-  for (var j = 1; j < su.length; j++) {
-    var s = su[j]; if (!s[0]) continue;
-    var dd = match(s[0]); if (!dd) { dd = newDossier(); dd.nom = cap(s[0]); dd.aVerifier = true; list.push(dd); }
-    var et = parseInt(String(s[1]).replace(/\D.*$/, ''), 10);
-    var mapE = {2: 2, 5: 5, 7: 7, 9: 8}; if (mapE[et] !== undefined) dd.etape = mapE[et];
-    if (s[2]) dd.tel = normTel(s[2]);
-    if (s[3]) { var em = String(s[3]).split(/\s+/)[0]; if (/@/.test(em)) dd.email = em; } // on ne reprend JAMAIS un mot de passe
-    if (/^\d{5}$/.test(String(s[4]).trim())) dd.cp = String(s[4]).trim();
-    if (s[5] && !dd.source) dd.source = mapSource(s[5]);
-    if (s[6]) dd.statutMPR = ({'Déposé': 'Déposé', 'Validé': 'Octroyé', 'À déposer': 'À déposer'})[s[6]] || dd.statutMPR;
-    if (s[7]) dd.statutOPX = ({'Déposé': 'Déposé', 'Validé': 'Validé', 'À déposer': 'À déposer'})[s[7]] || dd.statutOPX;
-    if (s[8] && !dd.poseur) dd.poseur = cap(s[8]);
-    if (s[9] && !dd.fournisseur) dd.fournisseur = mapFournisseur(s[9]);
-    if (s[11] === 'Reçu') { dd.statutMPR = 'Payé'; dd.encaisseMPR = dd.valoMPR || ''; } else if (s[11] === 'Demandé') dd.statutMPR = 'Paiement demandé'; else if (s[11] === 'Non concerné') dd.statutMPR = 'Non concerné';
-    if (s[12] === 'Reçu') { dd.statutOPX = 'Payé'; dd.encaisseCEE = dd.valoCEE || ''; } else if (s[12] === 'Demandé') dd.statutOPX = 'Paiement demandé'; else if (s[12] === 'Pièces demandées') dd.notes = ((dd.notes || '') + ' · OPX : pièces demandées').trim();
-    if (s[13]) dd.notes = ((dd.notes || '') + ' · ' + s[13]).trim();
-    if (dd.etape === 8 && !dd.dateDemandeSolde) dd.dateDemandeSolde = dd.datePose || '';
-    if (dd.etape >= 8 && resteAEncaisser(dd) === 0 && (dd.valoCEE || dd.valoMPR)) dd.etape = 9;
-    dd.historique = [{t: Date.now(), etape: dd.etape}];
-  }
-
-  // 3) igor install + 4) call Maroc : coordonnées et infos techniques
-  var techSources = [SOURCES.IGOR].concat(SOURCES.CALL_MAROC);
-  techSources.forEach(function (id, srcIdx) {
-    var rows; try { rows = readTable(id); } catch (e) { return; }
-    rows.forEach(function (rr) {
-      var nom = rr.get('nom'); if (!nom || /^dupont$/i.test(nom.trim())) return;
-      var x = match(nom) || match(nom + ' ' + rr.get('prenom'));
-      if (!x) { x = leadFromCallRow(rr); if (srcIdx === 0) x.source = 'Igor'; list.push(x); return; }
-      fillBlanks(x, leadFromCallRow(rr));
-    });
-  });
-
-  list.forEach(function (d) {
-    // anciens chantiers « INSTALLER » absents du Suivi clients : considérés soldés (à vérifier)
-    if (Number(d.etape) === 9) {
-      if (d.valoCEE && !d.encaisseCEE) { d.encaisseCEE = d.valoCEE; d.statutOPX = 'Payé'; }
-      if (d.valoMPR && !d.encaisseMPR) { d.encaisseMPR = d.valoMPR; d.statutMPR = 'Payé'; }
-    }
-    // « DUPONT Marie » + prénom « Marie » → nom « Dupont »
-    var p = keyNom(d.prenom);
-    if (p && keyNom(d.nom).length > p.length && keyNom(d.nom).slice(-p.length) === p) {
-      d.nom = d.nom.split(' ').filter(function (w) { return keyNom(w) !== p; }).join(' ') || d.nom;
-    }
-    writeRecord(sh, index, d);
-  });
-  Logger.log('✅ ' + list.length + ' dossiers importés. Ils sont marqués « à vérifier » dans l\'appli.');
-}
-
 /* ============================================================
    Outils
    ============================================================ */
-function leadFromCallRow(r) {
-  var d = newDossier();
-  d.source = 'Call Maroc'; d.nom = cap(r.get('nom')); d.prenom = cap(r.get('prenom'));
-  d.adresse = r.get('adresse').trim(); d.cp = r.get('cp').trim(); if (/^\d{4}$/.test(d.cp)) d.cp = '0' + d.cp; d.ville = cap(r.get('ville'));
-  d.tel = normTel(r.get('tel')); var em = r.get('mail'); if (/@/.test(em)) d.email = em.split(/[\s\/]+/).filter(function (x) { return /@/.test(x); })[0];
-  d.compteur = /tri|380/i.test(r.get('compteur')) ? 'Tri' : (/mono/i.test(r.get('compteur')) ? 'Mono' : '');
-  d.habitat = /maison/i.test(r.get('habitat')) ? 'Maison individuelle' : (/appart/i.test(r.get('habitat')) ? 'Appartement' : '');
-  var ch = r.get('chauffage') + ' ' + r.get('_A'); d.chauffage = /fioul/i.test(ch) ? 'Chaudière fioul' : (/gaz/i.test(ch) ? 'Chaudière gaz' : (/bois/i.test(ch) ? 'Bois' : ''));
-  var surf = (r.get('situation') + ' ' + r.get('_A')).match(/(\d{2,3})\s*m/i); if (surf) d.surface = surf[1];
-  var rad = r.get('_A').match(/(\d{1,2})\s*rad/i); if (rad) d.emetteurs = rad[1] + ' radiateurs';
-  var coul = r.get('categorie').toLowerCase(); if (/bleu|jaune|violet|rose/.test(coul)) d.couleurForcee = coul.match(/bleu|jaune|violet|rose/)[0];
-  d.produit = mapProduit(r.get('produit') || 'PAC');
-  d.notes = [r.get('_A'), r.get('installe')].filter(function (x) { return x && x.trim(); }).join(' · ');
-  var inst = r.get('installe');
-  if (/infesab|infaisab/i.test(inst)) d.etape = 0;
-  return d;
-}
-
-function readTable(id) {
-  var v = SpreadsheetApp.openById(id).getSheets()[0].getDataRange().getDisplayValues();
-  var hRow = -1;
-  for (var i = 0; i < Math.min(6, v.length); i++) { var j = v[i].join('|').toLowerCase(); if (j.indexOf('nom') >= 0 && j.indexOf('cp') >= 0) { hRow = i; break; } }
-  if (hRow < 0) return [];
-  var H = v[hRow].map(function (x) { return String(x).toLowerCase().trim(); });
-  function col(re) { for (var k = 0; k < H.length; k++) if (re.test(H[k])) return k; return -1; }
-  var map = {nom: col(/^nom$/), prenom: col(/pr[ée]nom/), adresse: col(/adresse/), cp: col(/^cp$|code postal/), ville: col(/ville/), tel: col(/^t[ée]l/),
-    compteur: col(/compteur/), mail: col(/mail/), situation: col(/situation/), habitat: col(/habitat/), chauffage: col(/chauffage/), categorie: col(/cat[ée]gorie/),
-    produit: col(/produit/), installe: col(/install/), _A: 0};
-  return v.slice(hRow + 1).map(function (row) { return {get: function (k) { var c = map[k]; return c >= 0 ? String(row[c] || '') : ''; }}; });
-}
-
-function applyStatutTexte(d, t) {
-  t = String(t).toUpperCase();
-  if (/DEMANDE MPR PAIEMENT/.test(t)) d.statutMPR = 'Paiement demandé';
-  else if (/DEMANDE MPR FAIT/.test(t)) d.statutMPR = 'Déposé';
-  else if (/ATTENTE OCTROI/.test(t)) d.statutMPR = 'Déposé';
-  else if (/ATTENTE CODE/.test(t)) d.statutMPR = 'Attente code';
-  if (/OPX FAIT/.test(t)) d.statutOPX = 'Déposé';
-}
-function mapSource(s) { s = String(s || '').toLowerCase(); if (/call|maroc/.test(s)) return 'Call Maroc'; if (/hello|ha\b/.test(s)) return 'Hello Artisan'; if (/effy/.test(s)) return 'Effy'; if (/igor/.test(s)) return 'Igor'; if (/parrain/.test(s)) return 'Parrainage'; if (/interne|direct/.test(s)) return 'Direct'; if (/fred/.test(s)) return 'Apporteur'; return s ? 'Autre' : ''; }
-function mapProduit(s) { s = String(s || '').toLowerCase(); if (/ite/.test(s) && !/pac/.test(s)) return 'ITE'; if (/ssc/.test(s)) return 'SSC'; if (/btd|thermo/.test(s)) return 'PAC + ballon thermo'; if (/ballon\s*el|be\b/.test(s)) return 'PAC + ballon élec'; if (/pac/.test(s)) return 'PAC air/eau'; return 'Autre'; }
-function mapFournisseur(s) { s = String(s || '').toLowerCase(); if (/brother/.test(s)) return 'Brother Négoce'; if (/mick|micha|bengo|axdis/.test(s)) return 'Axdis'; if (/elle\s*m/.test(s)) return 'LM Plastic'; if (/\blm\b|plastic/.test(s)) return 'LM Plastic'; if (/fourni\s*pose/.test(s)) return 'Fourni-posé'; return s.trim() ? 'Autre' : ''; }
-function splitNomPrix(s) { s = String(s || ''); var p = firstNum(s); var nom = s.replace(/-?\d[\d\s.,]*/g, ' ').replace(/\b(ttc|ht|paye|payé|poseur|€)\b/ig, ' ').replace(/[\/?]/g, ' ').replace(/\s+/g, ' ').trim(); return {prix: p, nom: cap(nom)}; }
-function firstNum(s) { var m = String(s || '').match(/-?\d[\d\s]*(?:[.,]\d+)?/); if (!m) return ''; return String(Number(m[0].replace(/\s/g, '').replace(',', '.'))); }
-function parseDateFr(s) {
-  s = String(s || '').toLowerCase().trim(); if (!s) return '';
-  var m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/); if (m) { var y = m[3].length === 2 ? '20' + m[3] : m[3]; return y + '-' + pad(m[2]) + '-' + pad(m[1]); }
-  var mois = ['janv', 'f[ée]v', 'mars', 'avr', 'mai', 'juin', 'juil', 'ao[uû]', 'sept', 'oct', 'nov', 'd[ée]c'];
-  var dm = s.match(/(\d{1,2})\s*([a-zéû]+)/); if (!dm) return '';
-  for (var i = 0; i < 12; i++) if (new RegExp('^' + mois[i]).test(dm[2])) return new Date().getFullYear() + '-' + pad(i + 1) + '-' + pad(dm[1]);
-  return '';
-}
 function pad(n) { return ('0' + n).slice(-2); }
 function cap(s) { s = String(s || '').trim().replace(/\s+/g, ' '); return s.toLowerCase().replace(/(^|[\s\-'])([a-zà-ÿ])/g, function (a, b, c) { return b + c.toUpperCase(); }); }
 function clean(s) { return String(s == null ? '' : s).replace(/[\u0000-\u001f\u007f<>]/g, ' ').trim().slice(0, 300); }
@@ -643,24 +393,10 @@ function authFail(key, label) {
   if (n === 8) notifyAdmin('🔐 Accès bloqué 15 minutes : ' + label, '8 codes faux de suite pour « ' + label + ' ».\nCet accès est bloqué 15 minutes. Si ce n\'est ni toi ni cette personne, change son PIN dans le CRM (Réglages).');
   Utilities.sleep(800);
 }
-/** Une régie ne peut ajouter que ses propres messages : ceux déjà enregistrés ne sont pas modifiables, les nouveaux sont signés par le serveur. */
-function ownComments(inc, stored, by) {
-  var known = {}; (stored || []).forEach(function (c) { if (c && c.t) known[c.t + '|' + String(c.txt).slice(0, 40)] = 1; });
-  return (inc || []).filter(function (c) { return c && c.t && c.txt && !known[c.t + '|' + String(c.txt).slice(0, 40)]; }).slice(-20).map(function (c) { return {t: Number(c.t) || Date.now(), by: by, txt: String(c.txt)}; });
-}
-/** Photos envoyées par un poseur ou une régie : seules les clés connues sont gardées, et le lien doit être en https. */
+/** Clés connues d'une photo. */
 var PHOTO_KEYS = ['id', 'kind', 'label', 'name', 'pdf', 't', 'by', 'pending', 'fileId', 'thumbId', 'url', 'prise', 'importee', 'lat', 'lng', 'acc', 'source'];
-function safePhotos(list) {
-  return (Array.isArray(list) ? list : []).slice(0, 200).filter(function (p) { return p && p.id; }).map(function (p) {
-    var o = {}; PHOTO_KEYS.forEach(function (k) { var v = p[k]; if (v === undefined || v === null) return; o[k] = typeof v === 'string' ? clean(v) : (typeof v === 'number' && isFinite(v)) || typeof v === 'boolean' ? v : ''; });
-    if (o.url && !/^https:\/\//.test(o.url)) delete o.url;
-    return o;
-  });
-}
 function keyNom(s) { return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z]/g, ''); }
 function normTel(s) { var d = String(s || '').split(/\/\/|\/| ou /)[0].replace(/\D/g, ''); if (d.indexOf('33') === 0 && d.length === 11) d = '0' + d.slice(2); if (d.length === 9) d = '0' + d; return d; }
-function fillBlanks(a, b) { Object.keys(b).forEach(function (k) { if (['id', 'createdAt', 'updatedAt', 'historique', 'etape', 'source', 'photos'].indexOf(k) >= 0) return; if ((a[k] === undefined || a[k] === '') && b[k] !== '' && b[k] !== undefined) a[k] = b[k]; }); if (b.notes && a.notes !== b.notes && String(a.notes || '').indexOf(b.notes) < 0) a.notes = ((a.notes || '') + ' · ' + b.notes).trim(); }
-
 function newDossier() {
   var now = Date.now();
   return {id: now.toString(36) + Math.random().toString(36).slice(2, 8), createdAt: now, updatedAt: now, etape: 1, source: '', nom: '', prenom: '', tel: '', email: '', adresse: '', cp: '', ville: '',
@@ -695,74 +431,11 @@ function couleurCalc(rfr, nb, cp) {
   rfr = Number(rfr); if (rfr <= pl(t.bleu)) return 'bleu'; if (rfr <= pl(t.jaune)) return 'jaune'; if (rfr <= pl(t.violet)) return 'violet'; return 'rose';
 }
 
-function visibleForPoseur(d, poseur) {
-  if (!d || d._deleted) return false;
-  var e = Number(d.etape); var p = String(d.poseur || '').toLowerCase();
-  if (p.indexOf(String(poseur).toLowerCase()) < 0) return false;
-  if (e >= 6 && e <= 7) return true;
-  if (e >= 8 && e <= 11) { var since = joursDepuis(d.dateInstallation || d.datePose); return since === null || since <= 30; }
-  return false;
-}
-/* ----- Régies : chacune ne voit que ses clients, sans les montants (sauf sa commission) ----- */
-var REGIE_FIELDS = ['id', 'nom', 'prenom', 'tel', 'email', 'adresse', 'cp', 'ville', 'produit', 'etape', 'createdAt', 'updatedAt', 'source', 'regie', 'pv', 'historique',
-  'docsDemandes', 'financementRAC', 'organismeFinancement', 'statutDevis', 'dateEnvoiDevis', 'dateSignatureDevis', 'datePose', 'dateInstallation', 'motifKO', 'commission', 'commissionPayeeLe', 'commentairesRegie', 'chauffage', 'surface', 'proprietaire', '_deleted'];
-var REGIE_CREATE = ['nom', 'prenom', 'tel', 'email', 'adresse', 'cp', 'ville', 'produit', 'chauffage', 'surface', 'proprietaire'];
-function visibleForRegie(d, regie) {
-  if (!d || d._deleted) return false;
-  var k = keyNom(regie); if (!k) return false;
-  return keyNom(d.regie) === k || keyNom(d.source) === k;
-}
-function configSheet() { return SpreadsheetApp.openById(PropertiesService.getScriptProperties().getProperty('DB_ID')).getSheetByName('Config'); }
-function actionRegies() {
-  var v = configSheet().getDataRange().getValues(); var all = readAll(); var out = [];
-  v.forEach(function (r) { var k = String(r[0] || ''); if (k.indexOf('REGIE_') !== 0) return; var nom = k.slice(6);
-    var n = all.filter(function (x) { return visibleForRegie(x.data, nom); }).length; out.push({nom: nom, pin: String(r[1]), clients: n}); });
-  return {regies: out};
-}
-function actionRegieAdd(nom) {
-  nom = String(nom || '').replace(/[^\wÀ-ÿ' -]/g, '').trim().slice(0, 40); if (!nom) throw new Error('Nom de régie vide');
-  var sh = configSheet(); var v = sh.getDataRange().getValues();
-  for (var i = 0; i < v.length; i++) if (String(v[i][0]).indexOf('REGIE_') === 0 && keyNom(String(v[i][0]).slice(6)) === keyNom(nom)) return {nom: String(v[i][0]).slice(6), pin: String(v[i][1]), existait: true};
-  var pin = randomPin(); sh.appendRow(['REGIE_' + nom, pin, 'PIN de la régie ' + nom]);
-  CacheService.getScriptCache().remove('cfg'); return {nom: nom, pin: pin};
-}
-function actionRegieDel(nom) {
-  var sh = configSheet(); var v = sh.getDataRange().getValues();
-  for (var i = v.length - 1; i >= 1; i--) if (String(v[i][0]).indexOf('REGIE_') === 0 && keyNom(String(v[i][0]).slice(6)) === keyNom(nom)) sh.deleteRow(i + 1);
-  CacheService.getScriptCache().remove('cfg'); return {ok: true};
-}
-function stripForRegie(d) {
-  var o = {}; REGIE_FIELDS.forEach(function (k) { if (d[k] !== undefined) o[k] = d[k]; });
-  o.photos = (d.photos || []).filter(function (p) { return p && DOC_KINDS.indexOf(p.kind) >= 0; }).map(function (p) { return {id: p.id, kind: p.kind, label: p.label, name: p.name, pdf: p.pdf, t: p.t, by: p.by, del: p.del, pending: p.pending && !p.fileId}; });
-  return o;
-}
 var DOC_KINDS = ['cni', 'avis', 'taxe', 'facture', 'autredoc', 'pvreception', 'attestation'];
-/* régie qui est aussi poseur (ex. Igor) : fiche régie + fiche chantier pour ses poses */
-function stripRegiePoseur(d, who) {
-  var vr = visibleForRegie(d, who.regie), vp = who.poseur && visibleForPoseur(d, who.poseur);
-  var o = vr ? stripForRegie(d) : {id: d.id, updatedAt: d.updatedAt};
-  if (vp) { var docs = o.photos || []; var ps = stripForPoseur(d); Object.keys(ps).forEach(function (k) { o[k] = ps[k]; }); if (vr) o.photos = mergePhotos(ps.photos, docs); o._pose = true; }
-  if (vr) o._regie = true;
-  return o;
-}
-/* documents envoyés par la régie : seulement les types de documents, jamais les autres pièces */
-function mergeDocsRegie(merged, stored, inc, regie) {
-  var avant = (stored.photos || []).filter(function (p) { return DOC_KINDS.indexOf(p.kind) >= 0; }).map(function (p) { return p.id; });
-  var docs = (inc.photos || []).filter(function (p) { return p && p.id && DOC_KINDS.indexOf(p.kind) >= 0 && avant.indexOf(p.id) < 0; })
-    .map(function (p) { return {id: clean(p.id), kind: p.kind, label: clean(p.label), name: clean(p.name), pdf: !!p.pdf, t: Number(p.t) || Date.now(), by: regie, pending: !!p.pending, fileId: clean(p.fileId), thumbId: clean(p.thumbId), url: clean(p.url)}; });
-  // mise à jour d'un document déjà connu (fichier arrivé sur le Drive)
-  var maj = (inc.photos || []).filter(function (p) { return p && avant.indexOf(p.id) >= 0 && p.fileId && !(stored.photos || []).some(function (q) { return q.id === p.id && q.fileId; }); }).map(function (p) { return {id: p.id, fileId: clean(p.fileId), thumbId: clean(p.thumbId), url: clean(p.url), pending: false}; });
-  if (!docs.length && !maj.length) return 0;
-  merged.photos = mergePhotos(stored.photos, docs.concat(maj));
-  var recus = merged.photos.filter(function (p) { return !p.del && DOC_KINDS.indexOf(p.kind) >= 0; }).map(function (p) { return p.kind; });
-  if (merged.docsDemandes) merged.docsDemandes = merged.docsDemandes.filter(function (k) { return recus.indexOf(k) < 0; });
-  return docs.length || -1;
-}
 function mergeComments(a, b) {
   var m = {}; (a || []).concat(b || []).forEach(function (c) { if (!c || !c.t || !c.txt) return; m[c.t + '|' + String(c.txt).slice(0, 40)] = {t: Number(c.t), by: clean(c.by), txt: String(c.txt).slice(0, 2000)}; });
   return Object.keys(m).map(function (k) { return m[k]; }).sort(function (x, y) { return x.t - y.t; });
 }
-function stripForPoseur(d) { var o = {}; POSEUR_FIELDS.forEach(function (k) { if (d[k] !== undefined) o[k] = d[k]; }); return o; }
 function mergePhotos(a, b) {
   var m = {}; (a || []).concat(b || []).forEach(function (p) { if (!p || !p.id) return; var o = m[p.id] || {}; Object.keys(p).forEach(function (k) { if (p[k] !== undefined && p[k] !== '' && !(k === 'pending' && o.fileId)) o[k] = p[k]; }); if (o.fileId) o.pending = false; m[p.id] = o; });
   return Object.keys(m).map(function (k) { return m[k]; });
@@ -794,7 +467,6 @@ function dataUrlToBlob(dataUrl, name) { var m = String(dataUrl).match(/^data:([^
 function extOf(dataUrl) { return /^data:application\/pdf/.test(dataUrl) ? '.pdf' : /image\/png/.test(dataUrl) ? '.png' : '.jpg'; }
 function notifyAdmin(subject, body) { try { var to = getConfig().EMAIL_ALERTES; if (to) MailApp.sendEmail(to, subject, body); } catch (e) { Logger.log(e); } }
 function randomCode(len) { var c = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789', s = ''; for (var i = 0; i < len; i++) s += c.charAt(Math.floor(Math.random() * c.length)); return s; }
-function randomPin() { return String(Math.floor(100000 + Math.random() * 900000)); }
 function json(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }
 
 /* ============================================================
