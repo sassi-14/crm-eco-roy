@@ -305,9 +305,16 @@ function finRetractation(d){ if(!d.dateSignatureDevis) return ""; const t=new Da
 function bloquantsPose(d){
   const b=[];
   if(mprConcerne(d) && !MPR_DEPOSE.includes(d.statutMPR)) b.push("dossier MPR pas encore déposé");
-  if(!isComptant(d) && (!d.statutOPX || d.statutOPX==="À déposer")) { if(d.compteOPX!=="Ouvert") b.push("dossier OPX pas ouvert"); }
+  if(!isComptant(d) && d.statutOPX!=="Non concerné" && (!d.statutOPX || d.statutOPX==="À déposer")) { if(d.compteOPX!=="Ouvert") b.push("dossier OPX pas ouvert"); }
   if(!d.renonciationRetractation){ const f=finRetractation(d); if(!f) b.push("date de signature du devis manquante (rétractation)"); else if(today()<f) b.push("rétractation en cours jusqu'au "+fmtDate(f)); }
   return b;
+}
+// Boutons pour lever un blocage quand le dossier ne passe pas par l'aide (demande de Sassi, 18/11)
+function deblocagesPose(d){
+  const b=[];
+  if(mprConcerne(d) && !MPR_DEPOSE.includes(d.statutMPR)) b.push(`<button class="btn" data-act="sansmpr">Ce client ne passe pas par MaPrimeRénov'</button>`);
+  if(!isComptant(d) && d.statutOPX!=="Non concerné" && (!d.statutOPX || d.statutOPX==="À déposer") && d.compteOPX!=="Ouvert") b.push(`<button class="btn" data-act="sansopx">Pas de dossier CEE / OPX pour ce client</button>`);
+  return b.length?`<div class="row" style="flex-wrap:wrap;gap:8px;margin-top:8px">${b.join("")}</div>`:"";
 }
 function bloquantsFacture(d){
   const b=[];
@@ -326,7 +333,7 @@ const SOURCES = ["Site internet","Google Ads","Meta","Habitat Acquisition","Parr
 const PRODUITS = ["PAC air/eau","PAC + ballon thermo","PAC + ballon élec","Ballon thermodynamique","SSC","ITE","Photovoltaïque","Autre"];
 const FOURNISSEURS = ["Axdis","Brother Négoce","LM Plastic","Fourni-posé","Autre"];
 function LIST(k){ const s=SET(); if(k==="fournisseurs") return [...new Set([...(s.fournisseurs||[]).map(f=>f.nom).filter(Boolean),"Fourni-posé","Autre"])]; return (s[k]&&s[k].length)?s[k]:({sources:SOURCES,produits:PRODUITS})[k]||[]; }
-const STATUT_OPX = ["À déposer","Déposé","Validé","Paiement demandé","Payé","Refusé"];
+const STATUT_OPX = ["À déposer","Déposé","Validé","Paiement demandé","Payé","Refusé","Non concerné"];
 const STATUT_MPR = ["À déposer","Attente code","Déposé","Octroyé","Paiement demandé","Payé","Non concerné"];
 const CHAUFFAGES = ["Chaudière gaz","Chaudière fioul","Électrique","Bois","PAC existante","Autre"];
 
@@ -1082,7 +1089,7 @@ function parcoursView(d){
   ${sec("05","Planification",[6,7],`<div class="form">
     ${F(d,"dispoClient","Disponibilité client","select",{options:DISPO_CLIENT,allowEmpty:true})}${F(d,"dispoPoseur","Disponibilité sous-traitant","select",{options:DISPO_POSEUR,allowEmpty:true})}
     ${F(d,"dispoMateriel","Disponibilité matériel","select",{options:DISPO_MATERIEL,allowEmpty:true})}${F(d,"poseur","Poseur","select",{options:poseursList(),allowEmpty:true})}
-    ${F(d,"datePose","Date de pose","date")}${F(d,"dateCommande","Matériel commandé le","date")}</div>${bl(bloquantsPose(d),"Pose bloquée tant que :")}`)}
+    ${F(d,"datePose","Date de pose","date")}${F(d,"dateCommande","Matériel commandé le","date")}</div>${bl(bloquantsPose(d),"Pose bloquée tant que :")}${deblocagesPose(d)}`)}
   ${sec("06","Chantier",[8],`<div class="form">
     ${F(d,"incident","Incident chantier","select",{options:INCIDENTS})}${d.incident?F(d,"incidentDetail","Détail / prochaine action","text"):""}
     ${F(d,"noteInterne","Note interne équipe (/5)","select",{options:["","1","2","3","4","5"]})}${F(d,"reserves","Réserves","text")}
@@ -1251,6 +1258,10 @@ document.addEventListener("click", async e=>{
   if(act!=="loginmode" && act!=="sigclear" && act!=="star" && act!=="ouvrirmpr") e.preventDefault();
   switch(act){
     case "loginmode": S.loginMode=a.dataset.v; render(); break;
+    case "sansmpr": { if(!d) break; if(!(await confirmBox("Ce client ne sera pas déposé chez MaPrimeRénov' : la pose et la facture ne l'attendront plus. On peut revenir en arrière en changeant le « Statut MPR ». Confirmer ?"))) break;
+      d.statutMPR="Non concerné"; d.notes=((d.notes?d.notes+"\n":"")+"["+new Date().toLocaleDateString("fr-FR")+"] Pas de dépôt MaPrimeRénov' pour ce client.").trim(); await saveDossier(d); toast("✓ MPR : non concerné"); render(); break; }
+    case "sansopx": { if(!d) break; if(!(await confirmBox("Pas de dossier CEE / OPX pour ce client : la pose ne l'attendra plus. On peut revenir en arrière en changeant le « Statut OPX ». Confirmer ?"))) break;
+      d.statutOPX="Non concerné"; d.notes=((d.notes?d.notes+"\n":"")+"["+new Date().toLocaleDateString("fr-FR")+"] Pas de dossier CEE / OPX pour ce client.").trim(); await saveDossier(d); toast("✓ CEE / OPX : non concerné"); render(); break; }
     case "regielink": { const link=location.origin+location.pathname+"#serveur="+encodeURIComponent(CFG.url)+"&mode=regie"; try{ await navigator.clipboard.writeText(link); toast("Lien régie copié. Envoie-le avec le nom et le PIN de la régie."); }catch(_){ openModal(`<h2 style="margin-top:0">Lien régie</h2><div style="word-break:break-all;user-select:all">${esc(link)}</div>`); } break; }
     case "regies": await openRegies(); break;
     case "actus": await openActus(); break;
