@@ -1044,12 +1044,12 @@ function viewDossier(d){
   }
   if(S.tab==="hist") body=`${(d.comms||[]).length?`<h3>Contacts</h3><div class="list" style="margin-bottom:14px">${d.comms.slice().reverse().map(c=>`<div class="card"><div class="row"><b class="grow">${({sms:"SMS",whatsapp:"WhatsApp",mail:"Mail",appel:"Appel",commande:"Commande fournisseur"})[c.canal]||esc(c.canal)}${c.modele?" · "+esc(c.modele):""}</b><span class="small muted">${new Date(c.t).toLocaleString("fr-FR")}</span></div>${c.txt?`<div class="small muted" style="margin-top:4px">${esc(c.txt)}</div>`:""}</div>`).join("")}</div><h3>Étapes</h3>`:""}<div class="list">${(d.historique||[]).slice().reverse().map(h=>`<div class="card row"><span class="grow">${esc(etapeLabel(h.etape))}</span><span class="small muted">${new Date(h.t).toLocaleString("fr-FR")}</span></div>`).join("")}</div>
     <div class="hr"></div><div class="small muted">Créé le ${new Date(d.createdAt).toLocaleString("fr-FR")} · modifié le ${new Date(d.updatedAt).toLocaleString("fr-FR")}${d.modifiePar?" par "+esc(d.modifiePar):""}</div>
-    <button class="btn danger" style="margin-top:14px" data-act="delete">Supprimer ce dossier</button>`;
+    <button class="btn danger" style="margin-top:14px" data-act="delete">🗑 Supprimer ce dossier (test, doublon)</button>`;
   return loiBandeau(d)+`
   <div class="card">
     <div class="row"><span class="pastille c-${c||"none"}"></span><div class="grow"><div style="font-size:20px;font-weight:700">${esc(fullName(d))}</div>
       <div class="small muted">${[telLink(d.tel), esc(d.ville||d.cp), esc(d.source)].filter(Boolean).join(" · ")}</div></div>
-      ${d.aVerifier?'<button class="badge grey" data-act="verifok" style="border:0;cursor:pointer">à vérifier ✓</button>':""}</div>
+      ${d.aVerifier?'<button class="badge grey" data-act="verifok" style="border:0;cursor:pointer">à vérifier ✓</button>':""}<button class="badge grey" data-act="delete" title="Supprimer totalement (test, doublon)" style="border:0;cursor:pointer;margin-left:6px">🗑 Supprimer</button></div>
     <div class="stepper">${[1,2,3,4,5,6,7,8,9,10,11].map(n=>`<i class="${e>=n&&e!==12?"on":""}"></i>`).join("")}</div>
     <div class="row" style="gap:8px;margin-top:8px">
       <select data-field="etape" style="flex:1">${ETAPES.map(x=>`<option value="${x.n}" ${e===x.n?"selected":""}>${x.n?x.n+". ":""}${esc(x.l)}</option>`).join("")}</select>
@@ -1285,7 +1285,7 @@ document.addEventListener("click", async e=>{
     case "ouvrirmpr": if(d.refMPR){ try{ await navigator.clipboard.writeText(d.refMPR); }catch(e){} } break;
     case "encaisser": { const k=a.dataset.k; d["encaisse"+k]=d["valo"+k]||""; if(k==="CEE") d.statutOPX="Payé"; else d.statutMPR="Payé";
       if(resteAEncaisser(d)===0 && E.installe(Number(d.etape))) setEtape(d,11); await saveDossier(d); render(); break; }
-    case "delete": if(await confirmBox("Supprimer définitivement ce dossier ?")){ d._deleted=true; await saveDossier(d); history.back(); } break;
+    case "delete": if(await confirmBox("Supprimer totalement « "+fullName(d)+" » ? La fiche disparaît du CRM, de toutes les listes et des chiffres.")){ d._deleted=true; d.supprimeLe=today(); await saveDossier(d); S.dossiers.delete(d.id); toast("🗑 Dossier supprimé"); history.back(); } break;
     case "star": S.draftNote=Number(a.dataset.n); captureDraft(); S._keepScroll=true; render(); break;
     case "sigclear": { const c=$("canvas.sig"); c.getContext("2d").clearRect(0,0,c.width,c.height); sigDirty=false; break; }
     case "satsave": await saveSatisfaction(d); break;
@@ -2046,7 +2046,8 @@ document.addEventListener("click", async e=>{
       d.aVerifier=false; await saveDossier(d); toast(fullName(d)+" → "+etapeLabel(d.etape)+(v==="nrp"?" · NRP "+d.nbNRP:"")); render(); break; }
     case "mort": { if(!d) break;
       const enCours=Number(d.etape)>=5 && Number(d.etape)<=10;
-      openModal(`<h2 style="margin-top:0">Sûr ? ${esc(fullName(d))} → Perdu</h2><p class="small muted">Le dossier part dans « Perdus » et disparaît de toutes les listes d'actions. On ne le recontacte plus.${enCours?" <b class=\"neg\">Attention : le chantier est en cours (dossier aides, pose ou paiement).</b>":""}</p><p class="small" style="margin:8px 0 6px"><b>Pourquoi ?</b> (un clic = confirmé)</p><div class="grid" style="gap:8px">${["Plus intéressé","Injoignable","Locataire","Autre"].map(m=>`<button class="btn" data-mact="mortok" data-id="${esc(d.id)}" data-v="${esc(m)}">${esc(m)}</button>`).join("")}</div>`); break; }
+      openModal(`<h2 style="margin-top:0">Sûr ? ${esc(fullName(d))} → Perdu</h2><p class="small muted">Le dossier part dans « Perdus » et disparaît de toutes les listes d'actions. On ne le recontacte plus.${enCours?" <b class=\"neg\">Attention : le chantier est en cours (dossier aides, pose ou paiement).</b>":""}</p><p class="small" style="margin:8px 0 6px"><b>Pourquoi ?</b> (un clic = confirmé)</p><div class="grid" style="gap:8px">${["Plus intéressé","Injoignable","Locataire","Autre"].map(m=>`<button class="btn" data-mact="mortok" data-id="${esc(d.id)}" data-v="${esc(m)}">${esc(m)}</button>`).join("")}</div><div class="hr"></div><button class="btn danger" style="width:100%" data-mact="suppr" data-id="${esc(d.id)}">🗑 C'est un test → supprimer totalement</button>`); break; }
+    case "suppr": { if(!d) break; closeModal(); if(!(await confirmBox("Supprimer totalement « "+fullName(d)+" » ? La fiche disparaît du CRM, de toutes les listes et des chiffres."))) break; d._deleted=true; d.supprimeLe=today(); d.supprimeMotif="Lead de test"; await saveDossier(d); S.dossiers.delete(d.id); toast("🗑 "+fullName(d)+" supprimé"); if(S.view==="dossier") history.back(); else render(); break; }
     case "mortok": { if(!d) break; setEtape(d,0); d.motifKO="Mort · "+b.dataset.v; d.perduLe=today(); d.aVerifier=false; closeModal(); await saveDossier(d); toast(fullName(d)+" → Perdu ("+b.dataset.v+")"); render(); break; }
     case "qperdu": { setEtape(d,0); d.motifKO=b.dataset.v; d.aVerifier=false; closeModal(); await saveDossier(d); toast(fullName(d)+" → Perdu ("+b.dataset.v+")"); render(); break; }
     case "agtype": { const v=b.dataset.v; if(!v) S.agTypes=null; else { const a=S.agTypes||[]; const i=a.indexOf(v); if(i>=0) a.splice(i,1); else a.push(v); S.agTypes=a.length?a:null; } render(); break; }
