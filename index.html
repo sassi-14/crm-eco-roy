@@ -688,6 +688,7 @@ function render(){
   else if(v==="planning") h=`<div class="dtabs" style="margin-top:0"><button data-mact="pltab" data-v="taches" class="${(S.pltab||"taches")==="taches"?"on":""}">Tâches à faire</button><button data-mact="pltab" data-v="poses" class="${S.pltab==="poses"?"on":""}">Poses de la semaine</button></div>`+((S.pltab||"taches")==="taches"?viewAgenda():viewPlanningVisuel());
   else if(v==="finances") h=viewGestion();
   else if(v==="reglages") h=viewReglages()+viewReglagesPlus();
+  else if(v==="corbeille") h=viewCorbeille();
   const y=window.scrollY; const keepScroll = S._keepScroll; S._keepScroll=false;
   if(typeof MAP!=="undefined" && MAP){ try{ S.mapView={c:MAP.getCenter(),z:MAP.getZoom()}; MAP.remove(); }catch(_){ } MAP=null; }
   app.innerHTML = header() + h;
@@ -702,9 +703,9 @@ function safeRender(){
 }
 document.addEventListener("focusout",()=>setTimeout(()=>{ if(S.needRender && !sigDirty){ const a=document.activeElement; if(!a || !/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)){ S.needRender=false; captureDraft(); S._keepScroll=true; render(); } } },300));
 function header(){
-  const title = isRegie() ? (S.view==="nouveau"?"Nouveau client":S.view==="poseur"?"Mes chantiers":S.view==="dossier"?(S.prevView==="poseur"&&posLink()?"Chantier":"Suivi du client"):"Mes clients") : isPoseur() ? "Mes chantiers" : ({dash:"Tableau de bord",pipeline:"Dossiers",dossier:"Dossier",carte:"Carte",planning:"Planning",finances:"Gestion",reglages:"Réglages"})[S.view]||"CRM";
+  const title = isRegie() ? (S.view==="nouveau"?"Nouveau client":S.view==="poseur"?"Mes chantiers":S.view==="dossier"?(S.prevView==="poseur"&&posLink()?"Chantier":"Suivi du client"):"Mes clients") : isPoseur() ? "Mes chantiers" : ({dash:"Tableau de bord",pipeline:"Dossiers",dossier:"Dossier",carte:"Carte",planning:"Planning",finances:"Gestion",reglages:"Réglages",corbeille:"Corbeille"})[S.view]||"CRM";
   const sub = isRegie() ? esc(CFG.regie)+" · Eco Roy" : isPoseur() ? esc(CFG.poseur) : (CFG.role==="demo"?"Mode démo (données locales)":"Eco-Roy"+(CFG.user?" · "+esc(CFG.user):""));
-  const back = (S.view==="dossier"||(isRegie()&&S.view==="nouveau")) ? `<button class="back" data-act="back" aria-label="Retour">←</button>` : "";
+  const back = (S.view==="dossier"||S.view==="corbeille"||(isRegie()&&S.view==="nouveau")) ? `<button class="back" data-act="back" aria-label="Retour">←</button>` : "";
   return `<header class="top">${back}<h1>${title}<small>${sub}</small></h1><div class="sync" id="sync" data-act="sync"></div></header>`;
 }
 function renderSync(){
@@ -1276,7 +1277,7 @@ document.addEventListener("click", async e=>{
     case "regiecom": { const dd=S.dossiers.get(a.dataset.id||S.param); const ta=$("#regieMsg"); const txt=(ta&&ta.value||"").trim(); if(!dd||!txt) break; (dd.commentairesRegie=dd.commentairesRegie||[]).push({t:Date.now(),by:isRegie()?(CFG.regie||"Régie"):"Eco Roy",txt}); await saveDossier(dd); toast("Message envoyé"); render(); break; }
     case "login": doLogin(); break;
     case "demo": startDemo(); break;
-    case "back": history.back(); break;
+    case "back": if(S.view==="corbeille"){ S.view=S.prevView&&S.prevView!=="corbeille"?S.prevView:"reglages"; window.scrollTo(0,0); render(); } else history.back(); break;
     case "sync": S.sync.err=""; syncNow(); break;
     case "new": openWizard(null); break;
     case "qualifier": openWizard(d); break;
@@ -1285,7 +1286,7 @@ document.addEventListener("click", async e=>{
     case "ouvrirmpr": if(d.refMPR){ try{ await navigator.clipboard.writeText(d.refMPR); }catch(e){} } break;
     case "encaisser": { const k=a.dataset.k; d["encaisse"+k]=d["valo"+k]||""; if(k==="CEE") d.statutOPX="Payé"; else d.statutMPR="Payé";
       if(resteAEncaisser(d)===0 && E.installe(Number(d.etape))) setEtape(d,11); await saveDossier(d); render(); break; }
-    case "delete": if(await confirmBox("Supprimer totalement « "+fullName(d)+" » ? La fiche disparaît du CRM, de toutes les listes et des chiffres.")){ d._deleted=true; d.supprimeLe=today(); await saveDossier(d); S.dossiers.delete(d.id); toast("🗑 Dossier supprimé"); history.back(); } break;
+    case "delete": if(await confirmBox("Supprimer totalement « "+fullName(d)+" » ? La fiche disparaît des listes et des chiffres, mais reste dans la Corbeille (Réglages) : tu pourras la restaurer.")){ d._deleted=true; d.supprimeLe=today(); await saveDossier(d); S.dossiers.delete(d.id); toast("🗑 Dossier supprimé"); history.back(); } break;
     case "star": S.draftNote=Number(a.dataset.n); captureDraft(); S._keepScroll=true; render(); break;
     case "sigclear": { const c=$("canvas.sig"); c.getContext("2d").clearRect(0,0,c.width,c.height); sigDirty=false; break; }
     case "satsave": await saveSatisfaction(d); break;
@@ -1977,10 +1978,44 @@ async function logComm(d,canal,modele,txt){ (d.comms=d.comms||[]).push({t:Date.n
 /* ============================================================
    RÉGLAGES (lot 1)
    ============================================================ */
+
+/* ---------- Corbeille (fiches supprimées, admin) ---------- */
+async function chargerCorbeille(){
+  S.corb={loading:true,list:[]}; render();
+  try{
+    const res=await api("pull",{since:0});
+    S.corb={loading:false,list:(res.records||[]).filter(r=>r&&r._deleted)};
+  }catch(err){ S.corb={loading:false,list:[],err:String(err.message||err)}; }
+  if(S.view==="corbeille") render();
+}
+function corbDate(d){ const x=d.supprimeLe||d.retireLe; if(x) return x; return d.updatedAt?new Date(Number(d.updatedAt)).toISOString().slice(0,10):""; }
+function viewCorbeille(){
+  if(!isAdmin()) return '<div class="card empty">Réservé à l\'administrateur.</div>';
+  const C=S.corb||{loading:true,list:[]};
+  if(C.loading) return '<div class="card empty">Chargement de la corbeille…</div>';
+  if(C.err) return `<div class="card empty">Impossible de charger la corbeille (${esc(C.err)}). Vérifie la connexion et réessaie.</div><button class="btn" data-mact="corbeille" style="width:100%">Réessayer</button>`;
+  const ancien=d=>/Ancien stock/i.test(d.retireMotif||"");
+  const recentes=C.list.filter(d=>!ancien(d)), anciennes=C.list.filter(ancien);
+  const tab=S.corbTab||"recentes"; const L=(tab==="anciennes"?anciennes:recentes).slice().sort((a,b)=>corbDate(b).localeCompare(corbDate(a))||Number(b.updatedAt||0)-Number(a.updatedAt||0));
+  const ligne=d=>{ const motif=d.supprimeMotif||d.retireMotif||""; const qui=d.modifiePar?" par "+d.modifiePar:"";
+    return `<div class="card" style="margin-bottom:8px"><div class="row" style="justify-content:space-between;gap:8px;align-items:flex-start"><div class="grow"><b>${esc(fullName(d))}</b><div class="small muted">${esc([d.tel,d.cp,d.ville].filter(Boolean).join(" · "))}${d.source?" · "+esc(d.source):""}</div><div class="small">Supprimé le ${esc(fmtDate(corbDate(d)))}${esc(qui)}${motif?" — "+esc(motif):""}</div></div><button class="btn" data-mact="restaurer" data-id="${esc(d.id)}" style="white-space:nowrap">↩ Restaurer</button></div></div>`; };
+  return `<div class="small muted" style="margin:0 0 10px">Les fiches supprimées ne sont jamais effacées : elles restent ici. « Restaurer » les remet dans les dossiers.</div>
+  <div class="dtabs" style="margin-top:0"><button data-mact="corbtab" data-v="recentes" class="${tab==="recentes"?"on":""}">Supprimées (${recentes.length})</button><button data-mact="corbtab" data-v="anciennes" class="${tab==="anciennes"?"on":""}">Ancien stock du 17/11 (${anciennes.length})</button></div>
+  ${L.length?L.map(ligne).join(""):'<div class="card empty">Corbeille vide. 👌</div>'}`;
+}
+async function restaurerFiche(id){
+  const d=((S.corb&&S.corb.list)||[]).find(x=>x.id===id); if(!d) return;
+  if(!(await confirmBox("Remettre « "+fullName(d)+" » dans les dossiers ?"))) return;
+  d._deleted=false; d.restaureLe=today(); delete d.supprimeLe; delete d.supprimeMotif; delete d.retireLe; delete d.retireMotif;
+  await saveDossier(d);
+  S.corb.list=S.corb.list.filter(x=>x.id!==id);
+  toast("↩ "+fullName(d)+" restauré"); render();
+}
 function viewReglagesPlus(){
   if(!isAdmin()) return "";
   const s=SET();
-  return `<h2>Poseurs et capacité</h2><div class="card grid">${s.poseurs.map((p,i)=>`<div class="row" style="gap:8px"><input type="text" class="rs" data-rs="poseurs.${i}.nom" value="${esc(p.nom)}" class="grow"><label class="small muted row" style="gap:6px;white-space:nowrap">équipes <input type="text" inputmode="numeric" class="rs" data-rs="poseurs.${i}.capacite" value="${esc(p.capacite)}" style="width:60px"></label><button class="btn" data-mact="rmposeur" data-i="${i}">✕</button></div>`).join("")}
+  return `<h2>Corbeille</h2><div class="card"><button class="btn" data-mact="corbeille" style="width:100%">🗑 Voir les fiches supprimées</button><div class="small muted" style="margin-top:6px">Qui a été supprimé, quand, et par qui. Une fiche supprimée par erreur se restaure en un clic.</div></div>
+  <h2>Poseurs et capacité</h2><div class="card grid">${s.poseurs.map((p,i)=>`<div class="row" style="gap:8px"><input type="text" class="rs" data-rs="poseurs.${i}.nom" value="${esc(p.nom)}" class="grow"><label class="small muted row" style="gap:6px;white-space:nowrap">équipes <input type="text" inputmode="numeric" class="rs" data-rs="poseurs.${i}.capacite" value="${esc(p.capacite)}" style="width:60px"></label><button class="btn" data-mact="rmposeur" data-i="${i}">✕</button></div>`).join("")}
     <button class="btn" data-mact="addposeur">+ Ajouter un poseur</button><div class="small muted">Les codes PIN se règlent dans l'onglet « Config » de ta Google Sheet.</div></div>
   <h2>Sources de leads</h2><div class="card">${listEditor("sources",s.sources)}</div>
   <h2>Produits / types de travaux</h2><div class="card">${listEditor("produits",s.produits)}</div>
@@ -2005,6 +2040,9 @@ function editableSettings(){ if(!CFG.settings) CFG.settings=JSON.parse(JSON.stri
 document.addEventListener("click", async e=>{
   const b=e.target.closest("[data-mact]"); if(!b) return;
   const act=b.dataset.mact; const id=b.dataset.id; const d=id?S.dossiers.get(id):S.dossiers.get(S.param);
+  if(act==="corbeille"){ S.prevView=S.view; S.view="corbeille"; window.scrollTo(0,0); chargerCorbeille(); return; }
+  if(act==="corbtab"){ S.corbTab=b.dataset.v; render(); return; }
+  if(act==="restaurer"){ await restaurerFiche(id); return; }
   if(b.tagName==="INPUT") { if(act==="toggleperdus"){ S.showPerdus=b.checked; render(); } return; }
   if(act==="plmove" && e.target.closest(".pchip")){ e.preventDefault(); e.stopPropagation(); openPlanMove(d); return; }
   e.preventDefault(); e.stopPropagation();
@@ -2047,7 +2085,7 @@ document.addEventListener("click", async e=>{
     case "mort": { if(!d) break;
       const enCours=Number(d.etape)>=5 && Number(d.etape)<=10;
       openModal(`<h2 style="margin-top:0">Sûr ? ${esc(fullName(d))} → Perdu</h2><p class="small muted">Le dossier part dans « Perdus » et disparaît de toutes les listes d'actions. On ne le recontacte plus.${enCours?" <b class=\"neg\">Attention : le chantier est en cours (dossier aides, pose ou paiement).</b>":""}</p><p class="small" style="margin:8px 0 6px"><b>Pourquoi ?</b> (un clic = confirmé)</p><div class="grid" style="gap:8px">${["Plus intéressé","Injoignable","Locataire","Autre"].map(m=>`<button class="btn" data-mact="mortok" data-id="${esc(d.id)}" data-v="${esc(m)}">${esc(m)}</button>`).join("")}</div><div class="hr"></div><button class="btn danger" style="width:100%" data-mact="suppr" data-id="${esc(d.id)}">🗑 C'est un test → supprimer totalement</button>`); break; }
-    case "suppr": { if(!d) break; closeModal(); if(!(await confirmBox("Supprimer totalement « "+fullName(d)+" » ? La fiche disparaît du CRM, de toutes les listes et des chiffres."))) break; d._deleted=true; d.supprimeLe=today(); d.supprimeMotif="Lead de test"; await saveDossier(d); S.dossiers.delete(d.id); toast("🗑 "+fullName(d)+" supprimé"); if(S.view==="dossier") history.back(); else render(); break; }
+    case "suppr": { if(!d) break; closeModal(); if(!(await confirmBox("Supprimer totalement « "+fullName(d)+" » ? La fiche disparaît des listes et des chiffres, mais reste dans la Corbeille (Réglages) : tu pourras la restaurer."))) break; d._deleted=true; d.supprimeLe=today(); d.supprimeMotif="Lead de test"; await saveDossier(d); S.dossiers.delete(d.id); toast("🗑 "+fullName(d)+" supprimé"); if(S.view==="dossier") history.back(); else render(); break; }
     case "mortok": { if(!d) break; setEtape(d,0); d.motifKO="Mort · "+b.dataset.v; d.perduLe=today(); d.aVerifier=false; closeModal(); await saveDossier(d); toast(fullName(d)+" → Perdu ("+b.dataset.v+")"); render(); break; }
     case "qperdu": { setEtape(d,0); d.motifKO=b.dataset.v; d.aVerifier=false; closeModal(); await saveDossier(d); toast(fullName(d)+" → Perdu ("+b.dataset.v+")"); render(); break; }
     case "agtype": { const v=b.dataset.v; if(!v) S.agTypes=null; else { const a=S.agTypes||[]; const i=a.indexOf(v); if(i>=0) a.splice(i,1); else a.push(v); S.agTypes=a.length?a:null; } render(); break; }
@@ -2285,7 +2323,7 @@ function irisMenu(){
   const B=(attrs,l)=>`<button ${attrs}>${l}</button>`, Q=q=>B(`data-iris="${esc(q)}"`,q);
   return `<div class="iris-menu">
   <div><h4>Aujourd'hui</h4><div class="iris-grid">${Q("Je fais quoi aujourd'hui ?")}${Q("Leads à rappeler")}${Q("Devis à relancer")}${Q("Poses de la semaine")}${Q("Dossiers bloqués")}${Q("Combien il reste à encaisser ?")}</div></div>
-  <div><h4>Créer et gérer</h4><div class="iris-grid">${B('data-act="new"',"➕ Nouveau dossier")}${B('data-nav="pipeline" data-filter="trier"',"🧺 Fiches à trier")}${B('data-nav="planning"',"📅 Planning des poses")}${B('data-nav="carte"',"🗺️ Carte des clients")}${B('data-nav="finances"',"💶 Gestion et paiements")}${B('data-act="exportcompta"',"📊 Export comptable")}${B('data-nav="reglages"',"📆 Mes dates de pose dispo")}${B('data-nav="reglages"',"⚙️ Réglages et messages")}</div></div>
+  <div><h4>Créer et gérer</h4><div class="iris-grid">${B('data-act="new"',"➕ Nouveau dossier")}${B('data-nav="pipeline" data-filter="trier"',"🧺 Fiches à trier")}${B('data-nav="planning"',"📅 Planning des poses")}${B('data-nav="carte"',"🗺️ Carte des clients")}${B('data-nav="finances"',"💶 Gestion et paiements")}${B('data-act="exportcompta"',"📊 Export comptable")}${B('data-nav="reglages"',"📆 Mes dates de pose dispo")}${B('data-nav="reglages"',"⚙️ Réglages et messages")}${B('data-mact="corbeille"',"🗑 Corbeille")}</div></div>
   <div><h4>Un client</h4><div class="small">Tape son nom, sa ville ou son numéro en bas, puis ⚡ pour agir sans ouvrir la fiche : changer d'étape, mail, note, appel.</div></div></div>`;
 }
 function irisGo(nav,filter,label){ return `<button class="iris-go" data-nav="${nav}"${filter?` data-filter="${filter}"`:""}>${esc(label)} →</button>`; }
