@@ -687,7 +687,7 @@ function render(){
   else if(v==="dossier") h=viewDossier(S.dossiers.get(S.param));
   else if(v==="planning") h=`<div class="dtabs" style="margin-top:0"><button data-mact="pltab" data-v="taches" class="${(S.pltab||"taches")==="taches"?"on":""}">Tâches à faire</button><button data-mact="pltab" data-v="poses" class="${S.pltab==="poses"?"on":""}">Poses de la semaine</button></div>`+((S.pltab||"taches")==="taches"?viewAgenda():viewPlanningVisuel());
   else if(v==="finances") h=viewGestion();
-  else if(v==="reglages") h=viewReglages()+viewReglagesPlus();
+  else if(v==="reglages") h=(isAdmin()?`<button class="btn" data-mact="corbeille" style="width:100%;margin-bottom:12px">🗑 Corbeille : voir les fiches supprimées</button>`:"")+viewReglages()+viewReglagesPlus();
   else if(v==="corbeille") h=viewCorbeille();
   const y=window.scrollY; const keepScroll = S._keepScroll; S._keepScroll=false;
   if(typeof MAP!=="undefined" && MAP){ try{ S.mapView={c:MAP.getCenter(),z:MAP.getZoom()}; MAP.remove(); }catch(_){ } MAP=null; }
@@ -2014,8 +2014,7 @@ async function restaurerFiche(id){
 function viewReglagesPlus(){
   if(!isAdmin()) return "";
   const s=SET();
-  return `<h2>Corbeille</h2><div class="card"><button class="btn" data-mact="corbeille" style="width:100%">🗑 Voir les fiches supprimées</button><div class="small muted" style="margin-top:6px">Qui a été supprimé, quand, et par qui. Une fiche supprimée par erreur se restaure en un clic.</div></div>
-  <h2>Poseurs et capacité</h2><div class="card grid">${s.poseurs.map((p,i)=>`<div class="row" style="gap:8px"><input type="text" class="rs" data-rs="poseurs.${i}.nom" value="${esc(p.nom)}" class="grow"><label class="small muted row" style="gap:6px;white-space:nowrap">équipes <input type="text" inputmode="numeric" class="rs" data-rs="poseurs.${i}.capacite" value="${esc(p.capacite)}" style="width:60px"></label><button class="btn" data-mact="rmposeur" data-i="${i}">✕</button></div>`).join("")}
+  return `<h2>Poseurs et capacité</h2><div class="card grid">${s.poseurs.map((p,i)=>`<div class="row" style="gap:8px"><input type="text" class="rs" data-rs="poseurs.${i}.nom" value="${esc(p.nom)}" class="grow"><label class="small muted row" style="gap:6px;white-space:nowrap">équipes <input type="text" inputmode="numeric" class="rs" data-rs="poseurs.${i}.capacite" value="${esc(p.capacite)}" style="width:60px"></label><button class="btn" data-mact="rmposeur" data-i="${i}">✕</button></div>`).join("")}
     <button class="btn" data-mact="addposeur">+ Ajouter un poseur</button><div class="small muted">Les codes PIN se règlent dans l'onglet « Config » de ta Google Sheet.</div></div>
   <h2>Sources de leads</h2><div class="card">${listEditor("sources",s.sources)}</div>
   <h2>Produits / types de travaux</h2><div class="card">${listEditor("produits",s.produits)}</div>
