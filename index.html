@@ -282,7 +282,8 @@ function migrerV2(d){
   if(Number(d.etape)===4 && !d.statutDevis) d.statutDevis="Envoyé · en attente";
   d.pv=PV; return true;
 }
-const STATUT_APPEL = ["À contacter","NRP","À rappeler","Qualification en cours","Injoignable","Coordonnées invalides","Pas intéressé pour le moment"];
+const STATUT_APPEL = ["À contacter","NRP","À rappeler","Qualification en cours","Projet décalé","Injoignable","Coordonnées invalides","Pas intéressé pour le moment"];
+const STATUTS_PROPRIO = ["Propriétaire occupant","Futur propriétaire","Propriétaire bailleur","Locataire","SCI"];
 const CONFIRMATION = ["À confirmer","OK","KO"];
 const MOTIFS_KO = ["Pas éligible aux aides","Installation impossible (zone inondable…)","Emplacement chaudière inaccessible","Emplacement trop étroit","Autre motif technique / administratif"];
 const STATUT_DEVIS = ["À envoyer","Envoyé · en attente","Validé","Refusé","À modifier"];
@@ -967,7 +968,7 @@ function viewDossier(d){
       ${F(d,"adresse","Adresse","text",{full:true})}
       ${F(d,"cp","Code postal","text")}${F(d,"ville","Ville","text")}
       ${F(d,"habitat","Logement","select",{options:["Maison individuelle","Appartement","Autre"]})}
-      ${F(d,"proprietaire","Statut","select",{options:["Propriétaire occupant","Propriétaire bailleur","Locataire","SCI"]})}
+      ${F(d,"proprietaire","Statut","select",{options:STATUTS_PROPRIO})}
       ${F(d,"surface","Surface (m²)","number")}${F(d,"anneeConstruction","Année construction","number",{ph:"> 15 ans requis"})}
       ${F(d,"chauffage","Chauffage actuel","select",{options:CHAUFFAGES,allowEmpty:true})}${F(d,"emetteurs","Émetteurs","text",{ph:"ex : 7 radiateurs fonte"})}
       ${F(d,"compteur","Compteur","select",{options:["Mono","Tri"],allowEmpty:true})}
@@ -1781,7 +1782,7 @@ function tachesAgenda(){
   const T=[]; const t0=today();
   for(const d of actifs()){ const e=Number(d.etape); const ville=d.ville||d.cp||""; if(e===0) continue; // Perdu = plus aucune action
     const add=(date,type,txt,ic)=>T.push({d,date:date?String(date).slice(0,10):"",type,txt,ic,ville});
-    if(E.lead(e) && !d.aVerifier){ if(d.rappelLe) add(d.rappelLe,"rappel","Rappeler"+(String(d.rappelLe).length>10?" à "+String(d.rappelLe).slice(11,16):""),"📞"); else add("","rappel","Appeler (pas de date de rappel)","📞"); }
+    if(E.lead(e) && !d.aVerifier){ if(d.statutAppel==="Projet décalé") add(d.rappelLe||d.decaleAu||"","rappel","Projet décalé : prêt maintenant ? (s'il t'a recontacté → rappel ; sinon courrier)","⏸"); else if(d.rappelLe) add(d.rappelLe,"rappel","Rappeler"+(String(d.rappelLe).length>10?" à "+String(d.rappelLe).slice(11,16):""),"📞"); else add("","rappel","Appeler (pas de date de rappel)","📞"); }
     if(e===12 && d.rappelLTLe) add(d.rappelLTLe,"suivi","Relance suivi long terme","🔁");
     if(e===4 && d.dateEnvoiDevis && d.statutDevis!=="Refusé"){ if(!Number(d.nbRelancesDevis)) add(addJ(d.dateEnvoiDevis,7),"devis","Petit rappel du devis (1 seule fois)","📄"); }
     if(e===5) add(d.dateSignatureDevis?addJ(d.dateSignatureDevis,7):"","pieces","Compléter pièces / déposer MPR-OPX","🗂️");
@@ -1985,19 +1986,34 @@ async function logComm(d,canal,modele,txt){ (d.comms=d.comms||[]).push({t:Date.n
 /* ---------- Commentaires d'appel (suivi client) ---------- */
 function comDate(t){ return new Date(t).toLocaleString("fr-FR",{weekday:"short",day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}); }
 function dernierCom(d){ const C=d.commentaires||[]; if(!C.length && !d.rappelLe) return ""; const c=C[C.length-1];
-  return `<div class="small" style="flex-basis:100%;margin-top:4px">${c?`💬 <span class="muted">${esc(comDate(c.t))} :</span> ${esc(String(c.txt).slice(0,120))}${String(c.txt).length>120?"…":""}`:""}${d.rappelLe?` <b>· 📞 rappel ${esc(comDate(d.rappelLe))}</b>`:""}</div>`; }
+  return `<div class="small" style="flex-basis:100%;margin-top:4px">${c?`💬 <span class="muted">${esc(comDate(c.t))} :</span> ${esc(String(c.txt).slice(0,120))}${String(c.txt).length>120?"…":""}`:""}${d.statutAppel==="Projet décalé"?` <b>· ⏸ décalé${d.decaleAu?" au "+esc(new Date(d.decaleAu).toLocaleDateString("fr-FR")):""}</b>`:(d.rappelLe?` <b>· 📞 rappel ${esc(comDate(d.rappelLe))}</b>`:"")}</div>`; }
 function blocCommentaires(d){ const C=(d.commentaires||[]).slice().sort((a,b)=>b.t-a.t);
-  if(!C.length && !d.rappelLe) return "";
-  return `<div style="margin-top:12px"><div class="row" style="justify-content:space-between"><b>💬 Suivi des appels</b>${d.rappelLe?`<span class="badge">📞 Rappel : ${esc(comDate(d.rappelLe))}</span>`:""}</div>
+  if(!C.length && !d.rappelLe && d.statutAppel!=="Projet décalé") return "";
+  return `<div style="margin-top:12px"><div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:6px"><b>💬 Suivi des appels</b>${d.statutAppel==="Projet décalé"?`<span class="badge warn">⏸ Projet décalé${d.decaleAu?" jusqu'au "+esc(new Date(d.decaleAu).toLocaleDateString("fr-FR")):""}</span>`:""}${d.rappelLe?`<span class="badge">📞 ${d.statutAppel==="Projet décalé"?"À reprendre":"Rappel"} : ${esc(comDate(d.rappelLe))}</span>`:""}</div>
   ${C.map(c=>`<div class="rmsg" style="margin-top:6px"><div class="small muted">${esc(c.by||"")} · ${esc(comDate(c.t))}${c.rappel?" · rappel prévu "+esc(comDate(c.rappel)):""}</div>${esc(c.txt).replace(/\n/g,"<br>")}</div>`).join("")}</div>`; }
 function prochainJourOuvre(n,h){ const x=new Date(); let k=0; while(k<n){ x.setDate(x.getDate()+1); if(x.getDay()!==0&&x.getDay()!==6) k++; } x.setHours(h,0,0,0); return x; }
 function lundiProchain(h){ const x=new Date(); x.setDate(x.getDate()+((8-x.getDay())%7||7)); x.setHours(h,0,0,0); return x; }
 function dtLocal(x){ const p=n=>String(n).padStart(2,"0"); return x.getFullYear()+"-"+p(x.getMonth()+1)+"-"+p(x.getDate())+"T"+p(x.getHours())+":"+p(x.getMinutes()); }
 function ouvrirCommentaire(id){ const d=S.dossiers.get(id); if(!d) return;
+  const SEL=(i,l,opts,v)=>`<label class="f"><span>${l}</span><select id="${i}"><option value="">—</option>${opts.map(o=>{ const [val,lab]=Array.isArray(o)?o:[o,o]; return val===""?"":`<option value="${esc(val)}" ${String(v||"")===val?"selected":""}>${esc(lab)}</option>`; }).join("")}</select></label>`;
+  const INP=(i,l,t,v,ph)=>`<label class="f"><span>${l}</span><input type="${t}" id="${i}" value="${esc(v||"")}" ${ph?`placeholder="${esc(ph)}"`:""}></label>`;
   const Q=(l,x)=>`<button class="btn" data-mact="comrdv" data-v="${dtLocal(x)}">${l}</button>`;
   openModal(`<h2 style="margin-top:0">💬 ${esc(fullName(d))}</h2>
   <label class="f"><span>Ce qu'on s'est dit</span><textarea id="comTxt" rows="5" placeholder="Ex : chaudière fioul de 2004, maison 120 m², intéressé, veut en parler à sa femme. Rappeler jeudi après 18 h."></textarea></label>
   <label class="f" style="margin-top:8px"><span>Résultat de l'appel</span><select id="comStatut"><option value="">— ne pas changer —</option>${STATUT_APPEL.map(x=>`<option ${d.statutAppel===x?"selected":""}>${esc(x)}</option>`).join("")}</select></label>
+  <details class="card" style="margin-top:10px" open><summary style="cursor:pointer;font-weight:700">📋 Qualification rapide (ce que tu as appris)</summary>
+  <div class="form" style="margin-top:8px">
+    ${SEL("comProprio","Statut",STATUTS_PROPRIO,d.proprietaire)}${SEL("comHabitat","Logement",["Maison individuelle","Appartement","Autre"],d.habitat)}
+    ${SEL("comChauffage","Chauffage actuel",CHAUFFAGES,d.chauffage)}${INP("comAgeChaud","Âge de la chaudière / du chauffage","text",d.ageChauffage,"ex : 2004, 20 ans")}
+    ${INP("comSurface","Surface (m²)","number",d.surface)}${INP("comAnnee","Année de construction","number",d.anneeConstruction)}
+    ${INP("comNb","Personnes au foyer","number",d.nbPersonnes)}${SEL("comCouleur","Couleur des revenus",[["","Je ne sais pas"],["bleu","Bleu"],["jaune","Jaune"],["violet","Violet"],["rose","Rose"]],d.couleurForcee)}
+    ${INP("comDecideur","Qui décide ?","text",d.decideur,"ex : avec sa femme")}${INP("comDeclencheur","Pourquoi maintenant ?","text",d.declencheur,"ex : facture fioul, panne")}
+  </div></details>
+  <details class="card" style="margin-top:10px" ${d.statutAppel==="Projet décalé"?"open":""}><summary style="cursor:pointer;font-weight:700">⏸ Projet décalé (ex : récupère les clés en décembre)</summary>
+  <label class="row" style="gap:8px;margin-top:8px"><input type="checkbox" id="comDecale" ${d.statutAppel==="Projet décalé"?"checked":""}> Le projet est décalé</label>
+  ${INP("comDecaleAu","Prêt à partir du","date",d.decaleAu)}${INP("comDecaleMotif","Pourquoi ?","text",d.decaleMotif,"ex : achat de la maison, clés mi-décembre")}
+  <div class="small muted" style="margin-top:6px">⚖️ Loi : sans nouvelle demande du client, tu ne peux le rappeler que dans les 5 jours ouvrables. Pour un projet décalé, demande-lui de t'envoyer un SMS ou de t'appeler quand il est prêt (sa demande relance le délai), ou écris-lui par courrier à la date prévue. Le CRM te le rappelle ce jour-là.</div></details>
+  <label class="row" style="gap:8px;margin-top:10px"><input type="checkbox" id="comRecontact"> Le client vient de m'appeler / m'écrire lui-même (nouvelle demande : le délai de 5 jours repart)</label>
   <div class="small" style="margin:10px 0 6px"><b>Le rappeler quand ?</b> (facultatif)</div>
   <div class="row" style="gap:6px;flex-wrap:wrap">${Q("Demain 10 h",prochainJourOuvre(1,10))}${Q("Demain 18 h",prochainJourOuvre(1,18))}${Q("Dans 2 jours 10 h",prochainJourOuvre(2,10))}${Q("Lundi 10 h",lundiProchain(10))}</div>
   <input type="datetime-local" id="comRappel" value="${d.rappelLe?esc(String(d.rappelLe).slice(0,16)):""}" style="margin-top:8px;width:100%">
@@ -2007,9 +2023,19 @@ function ouvrirCommentaire(id){ const d=S.dossiers.get(id); if(!d) return;
 }
 async function enregistrerCommentaire(id){ const d=S.dossiers.get(id); if(!d) return;
   const txt=($("#comTxt")&&$("#comTxt").value||"").trim(); const st=$("#comStatut")?$("#comStatut").value:""; const r=$("#comRappel")?$("#comRappel").value:"";
-  if(!txt && !st && !r){ toast("Écris un commentaire ou choisis un rappel"); return; }
-  const c={t:Date.now(),by:CFG.user||(CFG.role==="admin"?"Sassi":"Eco Roy"),txt:txt||"(sans commentaire)"};
-  if(r){ c.rappel=r; d.rappelLe=r; if(!st && Number(d.etape)<=2) d.statutAppel="À rappeler"; }
+  const V=i=>{ const x=$("#"+i); return x?String(x.value||"").trim():""; };
+  const champs={proprietaire:"comProprio",habitat:"comHabitat",chauffage:"comChauffage",ageChauffage:"comAgeChaud",surface:"comSurface",anneeConstruction:"comAnnee",nbPersonnes:"comNb",couleurForcee:"comCouleur",decideur:"comDecideur",declencheur:"comDeclencheur"};
+  let qualif=[]; for(const k in champs){ const v=V(champs[k]); if(v && String(d[k]||"")!==v){ d[k]=v; qualif.push(k); } }
+  const decale=$("#comDecale")&&$("#comDecale").checked, decaleAu=V("comDecaleAu"), decaleMotif=V("comDecaleMotif");
+  const recontact=$("#comRecontact")&&$("#comRecontact").checked;
+  if(!txt && !st && !r && !qualif.length && !decale && !recontact){ toast("Écris un commentaire ou choisis un rappel"); return; }
+  if(decale){ d.statutAppel="Projet décalé"; if(decaleAu) d.decaleAu=decaleAu; if(decaleMotif) d.decaleMotif=decaleMotif; }
+  else if(d.statutAppel==="Projet décalé" && !st){ d.statutAppel="À rappeler"; delete d.decaleAu; }
+  if(recontact){ const n=new Date(); d.demandeInfoLe=dtLocal(n); d.demandeInfoCanal="Le client a recontacté Eco Roy le "+n.toLocaleString("fr-FR")+" (noté par "+(CFG.user||"Eco Roy")+")"; }
+  const extra=[decale?"⏸ Projet décalé"+(decaleAu?" jusqu'au "+new Date(decaleAu).toLocaleDateString("fr-FR"):"")+(decaleMotif?" ("+decaleMotif+")":""):"",recontact?"📩 Le client nous a recontactés":"",qualif.length?"📋 Qualification mise à jour":""].filter(Boolean).join(" · ");
+  const c={t:Date.now(),by:CFG.user||(CFG.role==="admin"?"Sassi":"Eco Roy"),txt:[txt,extra].filter(Boolean).join("\n")||"(sans commentaire)"};
+  if(r){ c.rappel=r; d.rappelLe=r; if(!st && !decale && Number(d.etape)<=2) d.statutAppel="À rappeler"; }
+  else if(decale && decaleAu){ d.rappelLe=decaleAu+"T10:00"; c.rappel=d.rappelLe; }
   if(st) d.statutAppel=st;
   (d.commentaires=d.commentaires||[]).push(c);
   await saveDossier(d); closeModal(); toast("💬 Commentaire enregistré"+(r?" · rappel "+comDate(r):"")); render();
